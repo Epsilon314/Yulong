@@ -1,5 +1,5 @@
 [package]
-name = "yulong_tcp"
+name = "tcp_server"
 version = "0.1.0"
 authors = ["Yiqing Zhu <yiqing_zhu2015@126.com>"]
 edition = "2018"
@@ -7,8 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-yulong_network = {path = "../../network"}
-
-tokio = {version = "1.11.0", features = ["net"]}
+yulong_network = {path = "../../../network"}
+yulong_tcp = {path = "../../../transport/tcp"}
 futures = "0.3.8"
-async-trait = "0.1.51"
+async-std = {version = "1.10.0", features = ["attributes", "tokio1"]}
