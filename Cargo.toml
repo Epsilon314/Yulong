@@ -10,9 +10,6 @@ edition = "2018"
 
 [workspace]
 members = [
-    "network",
+    "core",
     "transport/tcp",
-    "applications/bdn",
-    "applications/test/tcp_client",
-    "applications/test/tcp_server",
 ]
