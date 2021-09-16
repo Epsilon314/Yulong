@@ -4,7 +4,7 @@ use std::fmt;
 #[derive(Debug)]
 pub struct DumbError;
 impl fmt::Display for DumbError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
         unimplemented!("dumb error")
     }
 }
@@ -24,10 +24,29 @@ impl DeserializeError {
             boxed_error: Box::new(err)
         }
     }
-}
 
-impl fmt::Display for DeserializeError {
+    #[allow(dead_code)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Deserialize error: {}", self.describe)
+    }
+}
+
+pub struct TransportError {
+    describe: String,
+    #[allow(dead_code)]
+    boxed_error: Box<dyn Error>
+}
+
+impl TransportError {
+    pub fn new<S: ToString>(des: S, err: impl Error + 'static) -> Self {
+        Self {
+            describe: des.to_string(),
+            boxed_error: Box::new(err)
+        }
+    }
+
+    #[allow(dead_code)]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Transport error: {}", self.describe)
     }
 }

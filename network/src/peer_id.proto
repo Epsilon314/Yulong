@@ -3,10 +3,10 @@ syntax = "proto3";
 package peer_id;
 
 enum CryptoType {
-  SM2 = 0;
+    SM2 = 0;
 }
 
 message PublicKey {
-  CryptoType type = 1;
-  bytes data = 2;
+    CryptoType type = 1;
+    bytes data = 2;
 }
