@@ -9,7 +9,7 @@ pub struct IngressStream<S: AsyncRead + AsyncWrite + Send + Unpin + Debug,
 {
     pub remote_addr: SocketAddr,
     pub stream: S,
-    pub remote_pk: Option<<C as crypto::Signer>::SIG>,
+    pub remote_pk: Option<<C as crypto::Signer>::PK>,
 }
 
 #[async_trait]
