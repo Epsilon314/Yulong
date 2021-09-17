@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package pbft;
+
+message proto_pbft_message {
+
+    uint32 round = 1;
+    
+    uint32 msg_no = 2;
+    uint32 msg_type = 3;
+    
+    bytes dst_id = 4;
+    bytes src_id = 5;
+    bytes from_id = 6;
+    
+    bytes signer_id = 7;
+    
+    bytes proof = 8;
+    bytes payload = 9;
+}

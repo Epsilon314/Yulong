@@ -4,6 +4,7 @@ package peer_id;
 
 enum CryptoType {
     SM2 = 0;
+    Unknown = 1;
 }
 
 message PublicKey {
