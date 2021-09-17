@@ -30,7 +30,7 @@ async fn server<T: Transport>() {
     }
 }
 
-async fn connection<'a, T: Transport> (stream: IngressStream<<T as Transport>::Stream>) {
+async fn connection<'a, T: Transport> (stream: IngressStream<<T as Transport>::Stream, T::Signer>) {
     
     let mut accepted_stream = stream.stream;
     let remote_addr = stream.remote_addr;

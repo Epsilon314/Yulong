@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package bdn;
+
+message bdn_message {
+    bytes data = 1;
+}

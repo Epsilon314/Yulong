@@ -1,55 +1,103 @@
+pub mod crypto;
+pub mod sm_signer;
+
 use libsm::sm3;
-use libsm::sm2;
-use crate::{peer_id, error::DeserializeError, error::DumbError};
+use crate::{peer_id, error::DeserializeError, error::DumbError, error::TryfromSliceError};
 use prost::Message;
 use rand;
 use rand::Rng;
+use crypto::{SeDer};
+use sm_signer::{SmPubKey, SmSecKey};
 
-#[derive(Clone, Copy, Hash, PartialOrd, PartialEq)]
+pub struct Me {
+    raw_id: [u8; Peer::ID_SIZE],
+    pubkey: PublicKey,
+    privatekey: PrivateKey
+}
+
+// impl Me {
+//     pub fn new() -> Self {
+//     }
+// }
+
+
+#[derive(Clone)]
 pub struct Peer {
-    raw_id: [u8;32],
-
+    raw_id: [u8; Peer::ID_SIZE],
+    pubkey: PublicKey
 }
 
 impl Peer {
 
+    const ID_SIZE: usize = 32;
+
+    pub fn get_id(&self) -> [u8; Peer::ID_SIZE] {
+        self.raw_id
+    }
+
     pub fn from_public_key(public_key: PublicKey) -> Peer {
-        let mut hash = sm3::hash::Sm3Hash::new(&public_key.serialize());
-        Peer {
-            raw_id: hash.get_hash()
+        let mut hash = sm3::hash::Sm3Hash::new(&public_key.into_bytes());
+        Self {
+            raw_id: hash.get_hash(),
+            pubkey: public_key,
         }
     }
 
     pub fn from_random() -> Peer {
-        let random_bytes = rand::thread_rng().gen::<[u8;32]>();
-        Peer {
-            raw_id: random_bytes
+        let random_bytes = rand::thread_rng().gen::<[u8; Peer::ID_SIZE]>();
+        Self {
+            raw_id: random_bytes,
+            pubkey: PublicKey::Unknown
         }
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Peer {
         let mut hash = sm3::hash::Sm3Hash::new(bytes);
-        Peer {
-            raw_id: hash.get_hash()
+        Self {
+            raw_id: hash.get_hash(),
+            pubkey: PublicKey::Unknown
         }
     }
 
+    pub fn try_from_id(id: &[u8]) -> Result<Peer, TryfromSliceError> {
+        
+        if id.len() == Peer::ID_SIZE {
+            let ptr = id.as_ptr() as *const [u8; Peer::ID_SIZE];
+            unsafe {
+                Ok(Self{
+                    raw_id: *ptr,
+                    pubkey: PublicKey::Unknown
+                })
+            }
+        }
+        else {
+            Err(TryfromSliceError::new(format!("Id should be [u8: {}].", Peer::ID_SIZE), DumbError))
+        }
+    }
 }
 
+#[derive(Clone)]
 pub enum PublicKey {
-    SM2(sm2::signature::Pubkey)
+    SM2(SmPubKey),
+    Unknown
 }
 
-impl PublicKey {
+impl crypto::SeDer for PublicKey {
 
-    pub fn serialize(self) -> Vec<u8> {
+    fn into_bytes(&self) -> Vec<u8> {
         let proto_message = match self {
 
             PublicKey::SM2(key) => {
-                let ctx = sm2::signature::SigCtx::new();
                 peer_id::PublicKey {
                     r#type: peer_id::CryptoType::Sm2 as i32,
-                    data: ctx.serialize_pubkey(&key, true)
+                    data: key.into_bytes()
+                }
+            }
+
+            PublicKey::Unknown => {
+                peer_id::PublicKey {
+                    r#type: peer_id::CryptoType::Unknown as i32,
+                    data: vec![]
                 }
             }
         };
@@ -58,7 +106,7 @@ impl PublicKey {
         buf
     }
 
-    pub fn deserialize(bytes: &[u8]) -> Result<PublicKey, DeserializeError> {
+    fn from_bytes(bytes: &[u8]) -> Result<Self, DeserializeError> {
 
         #[allow(unused_mut)]
         let mut key = peer_id::PublicKey::decode(bytes)
@@ -70,8 +118,7 @@ impl PublicKey {
 
         match key_type {
             peer_id::CryptoType::Sm2 => {
-                let ctx = sm2::signature::SigCtx::new();
-                match ctx.load_pubkey(&key.data) {
+                match  SmPubKey::from_bytes(&key.data) {
                     Ok(sm2_key) => {
                         Ok(PublicKey::SM2(sm2_key))
                     }
@@ -79,14 +126,18 @@ impl PublicKey {
                         Err(DeserializeError::new("Deserialize SM2 public key", DumbError))
                     }
                 }
-            },
+            }
+
+            peer_id::CryptoType::Unknown => {
+                Ok(PublicKey::Unknown)
+            }
         }
     }
 
 }
 
 pub enum PrivateKey {
-    SM2(sm2::signature::Seckey)
+    SM2(SmSecKey)
 }
 
 impl PrivateKey {}

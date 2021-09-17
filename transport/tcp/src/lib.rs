@@ -4,7 +4,7 @@ use futures::{AsyncRead, AsyncWrite};
 use std::{pin::Pin};
 use async_trait::async_trait;
 use tokio;
-
+use yulong_network::identity::crypto::NoneSigner;
 
 #[derive(Clone, Copy)]
 pub struct TcpContext {}
@@ -74,11 +74,13 @@ impl AsyncWrite for TcpStream {
     }
 }
 
+
 #[async_trait]
 impl Transport for TcpContext {
 
     type Stream = TcpStream;
     type Listener = tokio::net::TcpListener;
+    type Signer = NoneSigner;
 
     async fn listen(addr: std::net::SocketAddr) -> Result<Self::Listener, TransportError> {
         match tokio::net::TcpListener::bind(addr).await {
@@ -109,12 +111,16 @@ impl Transport for TcpContext {
 
 
     async fn accept(listener: &mut Self::Listener) 
-        -> Result<IngressStream<Self::Stream>, TransportError> {
+        -> Result<IngressStream<Self::Stream, Self::Signer>, TransportError> {
 
         match listener.accept().await {
             Ok((stream, remote_addr)) => {
                 let stream = Self::Stream::from(stream);
-                Ok(IngressStream{remote_addr, stream})
+                Ok(IngressStream{
+                    remote_addr: remote_addr, 
+                    stream: stream, 
+                    remote_pk: None
+                })
             }
             Err(error) => {
                 Err(TransportError::new(
