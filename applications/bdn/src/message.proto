@@ -3,5 +3,9 @@ syntax = "proto3";
 package bdn;
 
 message bdn_message {
-    bytes data = 1;
+    uint32 msg_type = 1;
+    
+    bytes from_id = 2;
+
+    bytes payload = 3;
 }

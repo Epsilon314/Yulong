@@ -15,7 +15,7 @@ async fn server<T: Transport>() {
 
     let mut listener: T::Listener = 
         T::listen(
-            SocketAddr::from_str("127.0.0.1:9001").ok().unwrap()
+            SocketAddr::from_str("0.0.0.0:9001").ok().unwrap()
         ).await.ok().unwrap();
 
     loop {

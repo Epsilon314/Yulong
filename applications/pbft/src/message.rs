@@ -10,7 +10,6 @@ pub struct PbftMessage {
 
     pub dst_id: Peer,
     pub src_id: Peer,
-    pub from_id: Peer,
     pub signer_id: Peer,
 
     pub proof: Vec<u8>,
@@ -27,7 +26,6 @@ impl crypto::SeDer for PbftMessage {
             msg_type: self.msg_type,
             dst_id: self.dst_id.get_id().to_vec(),
             src_id: self.src_id.get_id().to_vec(),
-            from_id: self.from_id.get_id().to_vec(),
             signer_id: self.signer_id.get_id().to_vec(),
             proof: self.proof.clone(),
             payload: self.payload.clone(),
@@ -48,7 +46,6 @@ impl crypto::SeDer for PbftMessage {
  
                 dst_id: Peer::try_from_id(&m.dst_id).expect("Wrong ID size."),
                 src_id: Peer::try_from_id(&m.src_id).expect("Wrong ID size."),
-                from_id: Peer::try_from_id(&m.from_id).expect("Wrong ID size."),
                 signer_id: Peer::try_from_id(&m.signer_id).expect("Wrong ID size."),
 
                 proof: m.proof,
@@ -72,7 +69,7 @@ mod test {
     fn pbft_message_serialize_deserialize() {
 
         let signer = identity::sm_signer::SmSigner::new();
-        let (pk, _) = signer.keygen();
+        let (pk, sk) = signer.keygen();
 
         let msg = message::PbftMessage {
             round: 10,
@@ -81,11 +78,10 @@ mod test {
             msg_type: 0,
         
             dst_id: message::Peer::from_random(),
-            src_id: message::Peer::from_public_key(identity::PublicKey::SM2(pk)),
-            from_id: message::Peer::from_bytes(&[1,2,3,4,5,6]),
-            signer_id: message::Peer::from_random(),
+            src_id: message::Peer::from_public_key(&identity::PublicKey::SM2(pk.clone())),
+            signer_id: message::Peer::from_bytes(&[1,2,3,4,5,6]),
         
-            proof: vec![1,2,3,4],
+            proof: signer.sign(&vec![3,3,3,3,3,3,3,3,3], &sk, &pk).into_bytes(),
             payload: vec![3,3,3,3,3,3,3,3,3],
         };
 
@@ -102,7 +98,6 @@ mod test {
 
         assert_eq!(msg.dst_id.get_id(), dse_msg.dst_id.get_id());
         assert_eq!(msg.src_id.get_id(), dse_msg.src_id.get_id());
-        assert_eq!(msg.from_id.get_id(), dse_msg.from_id.get_id());
         assert_eq!(msg.signer_id.get_id(), dse_msg.signer_id.get_id());
     }
 
