@@ -11,10 +11,9 @@ message proto_pbft_message {
     
     bytes dst_id = 4;
     bytes src_id = 5;
-    bytes from_id = 6;
     
-    bytes signer_id = 7;
+    bytes signer_id = 6;
     
-    bytes proof = 8;
-    bytes payload = 9;
+    bytes proof = 7;
+    bytes payload = 8;
 }

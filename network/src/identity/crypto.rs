@@ -13,10 +13,10 @@ pub trait Signer: 'static + Send {
     type SK: SeDer + Send + Clone;
     type SIG: SeDer + Send;
     
-    fn keygen(self) -> (Self::PK, Self::SK);
+    fn keygen(&self) -> (Self::PK, Self::SK);
 
-    fn sign(self, msg: &[u8], sk: &Self::SK, pk: &Self::PK) -> Self::SIG;
-    fn verify(self, msg: &[u8], pk: &Self::PK, sig: &Self::SIG) -> bool;
+    fn sign(&self, msg: &[u8], sk: &Self::SK, pk: &Self::PK) -> Self::SIG;
+    fn verify(&self, msg: &[u8], pk: &Self::PK, sig: &Self::SIG) -> bool;
 }
 
 
@@ -44,15 +44,15 @@ impl Signer for NoneSigner {
     type SK = NoneKey;
     type SIG = NoneKey;
 
-    fn keygen(self) -> (Self::PK, Self::SK) {
+    fn keygen(&self) -> (Self::PK, Self::SK) {
         unimplemented!()
     }
 
-    fn sign(self, msg: &[u8], sk: &Self::SK, pk: &Self::PK) -> Self::SIG {
+    fn sign(&self, msg: &[u8], sk: &Self::SK, pk: &Self::PK) -> Self::SIG {
         unimplemented!()
     }
 
-    fn verify(self, msg: &[u8], pk: &Self::PK, sig: &Self::SIG) -> bool {
+    fn verify(&self, msg: &[u8], pk: &Self::PK, sig: &Self::SIG) -> bool {
         unimplemented!()
     }
 }

@@ -8,17 +8,38 @@ use rand;
 use rand::Rng;
 use crypto::{SeDer};
 use sm_signer::{SmPubKey, SmSecKey};
+use std::hash::Hash;
+
+use self::{crypto::Signer, sm_signer::SmSigner};
 
 pub struct Me {
-    raw_id: [u8; Peer::ID_SIZE],
-    pubkey: PublicKey,
-    privatekey: PrivateKey
+    pub raw_id: [u8; Peer::ID_SIZE],
+    pub pubkey: PublicKey,
+    pub privatekey: PrivateKey
 }
 
-// impl Me {
-//     pub fn new() -> Self {
-//     }
-// }
+impl Me {
+
+    pub fn new() -> Self {
+        let signer = SmSigner::new();
+        let (pk, sk) = signer.keygen();
+        let id = Peer::from_public_key(&PublicKey::SM2(pk.clone())).raw_id;
+        Self {
+            raw_id: id,
+            pubkey: PublicKey::SM2(pk),
+            privatekey: PrivateKey::SM2(sk)
+        }
+    }
+
+    pub fn from_keypair(pk: PublicKey, sk: PrivateKey) -> Self {
+        let id = Peer::from_public_key(&pk).raw_id;
+        Self {
+            raw_id: id,
+            pubkey: pk,
+            privatekey: sk
+        }
+    }
+}
 
 
 #[derive(Clone)]
@@ -26,6 +47,20 @@ pub struct Peer {
     raw_id: [u8; Peer::ID_SIZE],
     pubkey: PublicKey
 }
+
+impl Hash for Peer {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.raw_id.hash(state);
+    }
+}
+
+impl PartialEq for Peer {
+    fn eq(&self, other: &Self) -> bool {
+        self.raw_id == other.raw_id
+    }
+}
+
+impl Eq for Peer {}
 
 impl Peer {
 
@@ -35,11 +70,11 @@ impl Peer {
         self.raw_id
     }
 
-    pub fn from_public_key(public_key: PublicKey) -> Peer {
+    pub fn from_public_key(public_key: &PublicKey) -> Peer {
         let mut hash = sm3::hash::Sm3Hash::new(&public_key.into_bytes());
         Self {
             raw_id: hash.get_hash(),
-            pubkey: public_key,
+            pubkey: public_key.to_owned(),
         }
     }
 
@@ -137,7 +172,8 @@ impl crypto::SeDer for PublicKey {
 }
 
 pub enum PrivateKey {
-    SM2(SmSecKey)
+    SM2(SmSecKey),
+    Unknown
 }
 
 impl PrivateKey {}

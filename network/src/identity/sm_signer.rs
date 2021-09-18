@@ -2,6 +2,8 @@ use libsm::sm2;
 use crate::identity::crypto::{SeDer, Signer};
 use crate::error::{DeserializeError, DumbError};
 
+use super::{PrivateKey, PublicKey};
+
 pub struct SmSigner {
     ctx: sm2::signature::SigCtx
 }
@@ -92,18 +94,18 @@ impl Signer for SmSigner {
 
     type SIG = SmSig;
 
-    fn keygen(self) -> (Self::PK, Self::SK) {
+    fn keygen(&self) -> (Self::PK, Self::SK) {
         let (pk, sk) = self.ctx.new_keypair();
         (Self::PK{pk}, Self::SK{sk})
     }
 
-    fn sign(self, msg: &[u8], sk: &Self::SK, pk: &Self::PK) -> Self::SIG {
+    fn sign(&self, msg: &[u8], sk: &Self::SK, pk: &Self::PK) -> Self::SIG {
         Self::SIG {
             sig: self.ctx.sign(msg, &sk.sk, &pk.pk)
         }
     }
 
-    fn verify(self, msg: &[u8], pk: &Self::PK, sig: &Self::SIG) -> bool {
+    fn verify(&self, msg: &[u8], pk: &Self::PK, sig: &Self::SIG) -> bool {
         self.ctx.verify(msg, &pk.pk, &sig.sig)
     }
 }
