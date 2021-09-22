@@ -2,8 +2,6 @@ use libsm::sm2;
 use crate::identity::crypto::{SeDer, Signer};
 use crate::error::{DeserializeError, DumbError};
 
-use super::{PrivateKey, PublicKey};
-
 pub struct SmSigner {
     ctx: sm2::signature::SigCtx
 }

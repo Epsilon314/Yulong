@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 async fn client<T: Transport>() {
     
     let mut stream = T::connect(
-        SocketAddr::from_str("127.0.0.1:9001").ok().unwrap()
+        &SocketAddr::from_str("127.0.0.1:9001").ok().unwrap()
     ).await.ok().unwrap();
 
     let buf :[u8; 5] = [1,2,3,4,5];

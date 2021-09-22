@@ -15,7 +15,7 @@ async fn server<T: Transport>() {
 
     let mut listener: T::Listener = 
         T::listen(
-            SocketAddr::from_str("0.0.0.0:9001").ok().unwrap()
+            &SocketAddr::from_str("0.0.0.0:9001").ok().unwrap()
         ).await.ok().unwrap();
 
     loop {
@@ -43,7 +43,7 @@ async fn connection<'a, T: Transport> (stream: IngressStream<<T as Transport>::S
             false
         }
         Ok(size) => {
-            println!("Received: {:?}", String::from_utf8(buf[0..size].to_vec()));
+            println!("Received: {:?}", String::from_utf8(buf[0..size].to_vec()).ok().unwrap());
             true
         }
         Err(_) => {

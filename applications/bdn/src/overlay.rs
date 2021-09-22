@@ -1,5 +1,5 @@
 use futures::AsyncWriteExt;
-use yulong_network::{identity::{Peer, Me}, transport::Transport};
+use yulong_network::{identity::{Peer, Me}, transport::{Transport}};
 use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 use crate::route::Route;
 use std::collections::HashMap;
@@ -8,7 +8,10 @@ pub struct BDN<T: Transport> {
 
     pub local_identity: Me,
     pub listener: <T as Transport>::Listener,
-    pub egress_stream: HashMap<Peer, <T as Transport>::Stream>
+    
+    pub address_book: HashMap<Peer, SocketAddr>,
+    
+    pub established_stream: HashMap<Peer, <T as Transport>::Stream>,
 
     // route: Route,
 }
@@ -21,19 +24,46 @@ impl<T: Transport> BDN<T> {
 
             listener: 
                 T::listen(
-                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port)
+                    &SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port)
                 ).await.ok().unwrap(),
             
-            egress_stream: HashMap::<Peer, <T as Transport>::Stream>::new()
+            address_book: HashMap::<Peer, SocketAddr>::new(),
+            
+            established_stream: HashMap::<Peer, <T as Transport>::Stream>::new(),
         }
     }
 
-    pub async fn connect() -> Self {
+    // accept incoming connections and spawn tasks to serve them
+    pub async fn run(&mut self) {
+
+        match T::accept(&mut self.listener).await {
+            Ok(istream) => {
+                // a new incoming connection
+
+            }
+            Err(error) => {
+                // Todo: log connection error after Log module is introduced
+            }
+        }
+    }
+
+    pub async fn connect(&mut self) -> Self {
+
+        for (peer, addr) in self.address_book.iter() {
+            match T::connect(addr).await {
+                Ok(stream) => {
+                    self.established_stream.insert(peer.clone(), stream);
+                }
+                Err(error) => {
+                    // Todo: log connection error after Log module is introduced
+                }
+            }
+        }
         unimplemented!()
     }
 
     pub async fn send_to(&mut self, dst: Peer, msg: &[u8]) {
-        let wstream = self.egress_stream.get_mut(&dst).unwrap();
+        let wstream = self.established_stream.get_mut(&dst).unwrap();
         wstream.write_all(msg).await.unwrap();
     }
 
