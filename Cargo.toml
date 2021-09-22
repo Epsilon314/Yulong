@@ -1,5 +1,5 @@
 [package]
-name = "YuLong"
+name = "yulong"
 version = "0.1.0"
 authors = ["Yiqing Zhu <yiqing_zhu2015@126.com>"]
 edition = "2018"

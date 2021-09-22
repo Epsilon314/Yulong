@@ -1,5 +1,12 @@
 use prost::Message;
-use yulong_network::{error::DeserializeError, identity::{Peer, crypto}};
+use yulong_network::{
+    error::DeserializeError,
+    identity::{Peer,
+        crypto::{
+            SeDer,
+        },
+    }
+};
 use crate::pbft_message::ProtoPbftMessage;
 
 pub struct PbftMessage {
@@ -16,7 +23,7 @@ pub struct PbftMessage {
     pub payload: Vec<u8>,
 }
 
-impl crypto::SeDer for PbftMessage {
+impl SeDer for PbftMessage {
 
     fn into_bytes(&self) -> Vec<u8> {
 
@@ -61,14 +68,21 @@ impl PbftMessage {
 #[cfg(test)]
 mod test {
 
-    use yulong_network::identity::{self, crypto::{SeDer, Signer}};
+    use yulong_network::identity::{
+        crypto::{
+            SeDer,
+            Signer,
+            sm_signer::SmSigner,
+            PublicKey,
+        }
+    };
 
     use crate::*;
 
     #[test]
     fn pbft_message_serialize_deserialize() {
 
-        let signer = identity::sm_signer::SmSigner::new();
+        let signer = SmSigner::new();
         let (pk, sk) = signer.keygen();
 
         let msg = message::PbftMessage {
@@ -78,7 +92,7 @@ mod test {
             msg_type: 0,
         
             dst_id: message::Peer::from_random(),
-            src_id: message::Peer::from_public_key(&identity::PublicKey::SM2(pk.clone())),
+            src_id: message::Peer::from_public_key(&PublicKey::SM2(pk.clone())),
             signer_id: message::Peer::from_bytes(&[1,2,3,4,5,6]),
         
             proof: signer.sign(&vec![3,3,3,3,3,3,3,3,3], &sk, &pk).into_bytes(),
