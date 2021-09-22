@@ -13,7 +13,7 @@ pub struct IngressStream<S: AsyncRead + AsyncWrite + Send + Unpin + Debug,
 }
 
 #[async_trait]
-pub trait Transport: 'static + Clone + Copy 
+pub trait Transport: 'static + Clone + Copy + Unpin + Send
 {
 
     type Stream: AsyncRead + AsyncWrite + Send + Unpin + Debug;
@@ -22,9 +22,9 @@ pub trait Transport: 'static + Clone + Copy
 
     type Signer: Send + crypto::Signer;
 
-    async fn listen(_: SocketAddr) -> Result<Self::Listener, TransportError>;
+    async fn listen(_: &SocketAddr) -> Result<Self::Listener, TransportError>;
 
-    async fn connect(_: SocketAddr) -> Result<Self::Stream, TransportError>;
+    async fn connect(_: &SocketAddr) -> Result<Self::Stream, TransportError>;
 
     async fn accept(_: &mut Self::Listener) -> 
         Result<IngressStream<Self::Stream, Self::Signer>, TransportError>;

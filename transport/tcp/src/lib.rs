@@ -82,7 +82,7 @@ impl Transport for TcpContext {
     type Listener = tokio::net::TcpListener;
     type Signer = NoneSigner;
 
-    async fn listen(addr: std::net::SocketAddr) -> Result<Self::Listener, TransportError> {
+    async fn listen(addr: &std::net::SocketAddr) -> Result<Self::Listener, TransportError> {
         match tokio::net::TcpListener::bind(addr).await {
             Ok(std_listener) => {
                 Ok(std_listener)
@@ -96,7 +96,7 @@ impl Transport for TcpContext {
     }
 
 
-    async fn connect(addr: std::net::SocketAddr) -> Result<Self::Stream, TransportError> {
+    async fn connect(addr: &std::net::SocketAddr) -> Result<Self::Stream, TransportError> {
 
         match tokio::net::TcpStream::connect(addr).await {
             Ok(std_stream) => {
