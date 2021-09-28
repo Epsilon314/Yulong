@@ -12,6 +12,7 @@ edition = "2018"
 members = [
     "network",
     "transport/tcp",
+    "transport/quic",
     "applications/test/tcp_client",
     "applications/test/tcp_server",
     "applications/bdn",

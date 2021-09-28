@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::{fs, io};
 use yulong_network::error::TransportError;
-use yulong_network::identity::crypto::NoneSigner;
+use yulong_network::identity::crypto::PublicKey;
 use yulong_network::transport::{IngressStream, Transport};
 
 #[derive(Clone, Copy)]
@@ -17,8 +17,8 @@ pub struct QuicContext {}
 
 #[derive(Debug)]
 pub struct QuicStream {
-    pub send_stream: SendStream,
-    pub recv_stream: RecvStream,
+    send_stream: SendStream,
+    recv_stream: RecvStream,
 }
 
 impl AsyncRead for QuicStream {
@@ -61,9 +61,7 @@ impl Transport for QuicContext {
 
     type Listener = quinn::Incoming;
 
-    type Signer = NoneSigner;
-
-    async fn listen(addr: std::net::SocketAddr) -> Result<Self::Listener, TransportError> {
+    async fn listen(addr: &std::net::SocketAddr) -> Result<Self::Listener, TransportError> {
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.max_concurrent_uni_streams(0).unwrap();
 
@@ -108,7 +106,7 @@ impl Transport for QuicContext {
         Ok(incoming)
     }
 
-    async fn connect(addr: std::net::SocketAddr) -> Result<Self::Stream, TransportError> {
+    async fn connect(addr: &std::net::SocketAddr) -> Result<Self::Stream, TransportError> {
         let mut endpoint = quinn::Endpoint::builder();
         let mut client_config = quinn::ClientConfigBuilder::default();
         client_config.protocols(&[b"hq-29"]);
@@ -145,7 +143,7 @@ impl Transport for QuicContext {
 
     async fn accept(
         listener: &mut Self::Listener,
-    ) -> Result<IngressStream<Self::Stream, Self::Signer>, TransportError> {
+    ) -> Result<IngressStream<Self::Stream>, TransportError> {
         if let Some(conn) = listener.next().await {
             let quinn::NewConnection {
                 connection,
@@ -171,7 +169,8 @@ impl Transport for QuicContext {
                         send_stream: send,
                         recv_stream: recv,
                     },
-                    remote_pk: None,
+                    // todo: retrieve pk
+                    remote_pk: PublicKey::NoKey,
                 });
             }
         }
