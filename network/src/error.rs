@@ -1,9 +1,9 @@
 use std::error::Error;
-use std::fmt;
+use std::fmt::{self, Display};
 
 #[derive(Debug)]
 pub struct DumbError;
-impl fmt::Display for DumbError {
+impl Display for DumbError {
     fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
         unimplemented!("dumb error")
     }
@@ -24,8 +24,9 @@ impl DeserializeError {
             boxed_error: Box::new(err)
         }
     }
+}
 
-    #[allow(dead_code)]
+impl Display for DeserializeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Deserialize error: {}", self.describe)
     }
@@ -44,8 +45,9 @@ impl TransportError {
             boxed_error: Box::new(err)
         }
     }
+}
 
-    #[allow(dead_code)]
+impl Display for TransportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Transport error: {}", self.describe)
     }
@@ -65,8 +67,9 @@ impl TryfromSliceError {
             boxed_error: Box::new(err)
         }
     }
+}
 
-    #[allow(dead_code)]
+impl Display for TryfromSliceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "TryfromSliceError error: {}", self.describe)
     }

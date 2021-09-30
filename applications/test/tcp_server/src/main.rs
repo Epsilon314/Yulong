@@ -1,13 +1,14 @@
 use std::{error::Error, net::SocketAddr, str::FromStr};
 use futures::{AsyncReadExt};
 use yulong_network::{transport::{IngressStream, Transport}};
-use yulong_tcp::{TcpContext};
+use yulong_tcp::TcpContext;
+use yulong_quic::QuicContext;
 
 use async_std::task;
 
 #[async_std::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    server::<TcpContext>().await;
+    server::<QuicContext>().await;
     Ok(())
 }
 
@@ -36,7 +37,7 @@ async fn connection<'a, T: Transport> (stream: IngressStream<<T as Transport>::S
     let remote_addr = stream.remote_addr;
     println!("Connected by {:?}", remote_addr);
 
-    let mut buf = [0u8; 100];
+    let mut buf = [0u8; 2048];
 
     while match accepted_stream.read(&mut buf).await {
         Ok(0_usize) => {
