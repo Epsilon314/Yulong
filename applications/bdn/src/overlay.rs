@@ -1,7 +1,6 @@
-use futures::{AsyncWriteExt};
+use futures::{AsyncReadExt, AsyncWriteExt};
 use yulong::utils::{
     bidirct_hashmap::BidirctHashmap,
-    type_alias::BoxedFuture,
 };
 
 use yulong_network::{
@@ -9,24 +8,26 @@ use yulong_network::{
     transport::{Transport},
 };
 
-use std::{collections::HashMap, net::{
+use std::{
+    collections::HashMap,
+    net::{
         SocketAddr, IpAddr, Ipv4Addr,
-    }, sync::{Arc, Mutex}};
+    },
+    sync::mpsc::{Sender},
+};
+
+use log::{warn, info};
 
 use crate::route::Route;
-use async_std::task;
 
 pub struct BDN<T: Transport> {
 
-    pub local_identity: Me,
-    pub listener: <T as Transport>::Listener,
+    local_identity: Me,
+    listener: <T as Transport>::Listener,
     
-    pub address_book: BidirctHashmap<Peer, SocketAddr>,
-    pub established_stream: Arc<Mutex<HashMap<Peer, <T as Transport>::Stream>>>,
-
-    // route: Route,
-
-    income_handler: Option<fn(&'_ [u8]) -> BoxedFuture<'_, bool>>,
+    address_book: BidirctHashmap<Peer, SocketAddr>,
+    w_stream: HashMap<Peer, <T as Transport>::Stream>,
+    msg_sender: Option<Sender<Vec<u8>>>,
 }
 
 impl<T: Transport> BDN<T> {
@@ -42,12 +43,10 @@ impl<T: Transport> BDN<T> {
             
             address_book: BidirctHashmap::<Peer, SocketAddr>::new(),
             
-            established_stream: Arc::new(Mutex::new(HashMap::<Peer, <T as Transport>::Stream>::new())),
-            
-            income_handler: None,
+            w_stream: HashMap::<Peer, <T as Transport>::Stream>::new(),
+            msg_sender: None,
         }
     }
-
 
     // accept incoming connections and spawn tasks to serve them
     pub async fn run(&mut self) {
@@ -67,13 +66,17 @@ impl<T: Transport> BDN<T> {
                         istream.remote_addr.clone());
                 }
 
-                let mut streams = self.established_stream.lock().unwrap();
-                streams.insert(peer, istream.stream);                
+                if let Some(sender) = self.msg_sender.clone() {
+                    async_std::task::spawn(
+                        async move {
+                                Self::handle_ingress(istream.stream, sender).await;
+                        });
+                }
                 true
             }
 
             Err(error) => {
-                // Todo: log connection error after Log module is introduced
+                warn!("BDN::run: {}", error);
                 true
             }
         } {}
@@ -81,36 +84,61 @@ impl<T: Transport> BDN<T> {
 
 
     pub async fn connect(&mut self) {
-
         for (peer, addr) in self.address_book.iter() {
-            let mut stream_handle = self.established_stream.lock().unwrap();
-            if stream_handle.contains_key(peer) {
+            if self.w_stream.contains_key(peer) {
                 continue;
             }
             match T::connect(addr).await {
                 Ok(stream) => {
-                    stream_handle.insert(peer.clone(), stream);
+                    self.w_stream.insert(
+                        peer.clone(),
+                        stream
+                    );
                 }
                 Err(error) => {
-                    // Todo: log connection error after Log module is introduced
+                    warn!("BDN::connect: {}", error);
                 }
             }
         }
     }
 
-    pub async fn send_to(&self, dst: Peer, msg: &[u8]) {
-        let mut stream_handle = self.established_stream.lock().unwrap();
-        let wstream = stream_handle.get_mut(&dst).unwrap();
-        wstream.write_all(msg).await.unwrap();
+    pub async fn send_to(&mut self, dst: Peer, msg: &[u8]) {
+        if let Some(wstream) = self.w_stream.get_mut(&dst) {
+            // use existing connection to dst
+            wstream.write_all(msg).await.unwrap();
+        }
+        else {
+            // connect and send
+        }
     }
 
     pub async fn broadcast(&self, src: Peer, msg: &[u8]) {
+        
+        
+        
         unimplemented!()
     }
 
-    pub fn register_msg_handler(&mut self, f: fn(&'_ [u8]) -> BoxedFuture<'_, bool>) {
-        self.income_handler = Some(f);
+    pub async fn handle_ingress(mut s: <T as Transport>::Stream, sender: Sender<Vec<u8>>) {
+        let mut buf = [0; 2048];
+
+        match s.read(&mut buf).await {
+            Ok(len) => {
+                info!("BDN::handle_ingress: read {} bytes", &len);
+                // collect a full message and then invoke callback
+                match sender.send(buf[0..len].to_vec()) {
+                    Ok(_) => {}
+                    Err(error) => {
+                        warn!("BDN::handle_ingress: {}", error);
+                    }
+                } 
+            }
+            Err(error) => {
+                warn!("BDN::handle_ingress: {}", error);
+            }
+        }
     }
+
 }
 
 
@@ -118,31 +146,30 @@ impl<T: Transport> BDN<T> {
 mod test {
     use super::BDN;
     use yulong_tcp::TcpContext;
-    use async_std::{self, future};
-    use yulong::utils::type_alias::BoxedFuture;
+    use async_std::{self};
+    use yulong::log;
 
-    async fn test_handle(buf: &[u8]) -> bool {
-        future::ready(buf == [1,2,3,4]).await
+    struct User {
+
     }
 
-    fn boxed_handle(buf: &'_ [u8]) -> BoxedFuture<'_, bool> {
-        Box::pin(test_handle(buf))
-    }
+    impl User {
+        
+        fn process(&mut self, buf: &[u8]) {
+            println!("{:?}", buf);
+        }
 
+    }
 
     #[async_std::test]
     async fn new_bdn() {
+
+        log::setup_logger().unwrap();
         
-        let mut bdn = BDN::<TcpContext>::new(10001).await;
+        let mut bdn = BDN::<TcpContext>::new(9001).await;
 
         println!("New BDN client at: {:?}", bdn.local_identity.raw_id);
-        
-        bdn.register_msg_handler(boxed_handle);
-        if let Some(f) = bdn.income_handler {
-           assert_eq!(true, f(&[1,2,3,4]).await);
-        }
-        else {
-            assert!(false);
-        }        
+        // bdn.run().await;
     }
+
 }

@@ -9,5 +9,6 @@ edition = "2018"
 [dependencies]
 yulong_network = {path = "../../../network"}
 yulong_tcp = {path = "../../../transport/tcp"}
+yulong_quic = {path = "../../../transport/quic"}
 futures = "0.3.8"
 async-std = {version = "1.10.0", features = ["attributes", "tokio1"]}

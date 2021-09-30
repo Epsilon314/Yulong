@@ -4,6 +4,7 @@ use futures::ready;
 use futures::StreamExt;
 use futures::{AsyncRead, AsyncWrite};
 use quinn::{RecvStream, SendStream};
+use yulong_network::error::DumbError;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -86,8 +87,8 @@ impl Transport for QuicContext {
                 fs::write(&key_path, &key).expect("failed to write private key");
                 (cert, key)
             }
-            Err(_) => {
-                panic!("failed to read certificate");
+            Err(err) => {
+                return Err(TransportError::new("failed to read certificate", err));
             }
         };
 
@@ -118,16 +119,16 @@ impl Transport for QuicContext {
                     .add_certificate_authority(quinn::Certificate::from_der(&cert).unwrap())
                     .unwrap();
             }
-            Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                panic!("local server certificate not found");
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                return Err(TransportError::new("local server certificate not found", err));
             }
-            Err(_e) => {
-                panic!("failed to open local server certificate");
+            Err(err) => {
+                return Err(TransportError::new("failed to open local server certificate", err));
             }
         }
 
         endpoint.default_client_config(client_config.build());
-        let (endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap()).unwrap();
+        let (endpoint, _) = endpoint.bind(&"0.0.0.0:0".parse().unwrap()).unwrap();
         let new_conn = endpoint.connect(&addr, "quic").unwrap().await.unwrap();
         let quinn::NewConnection {
             connection: conn, ..
@@ -154,11 +155,11 @@ impl Transport for QuicContext {
 
             if let Some(stream) = bi_streams.next().await {
                 let (send, recv) = match stream {
-                    Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                        panic!("connection closed");
+                    Err(quinn::ConnectionError::ApplicationClosed(_)) => {
+                        return Err(TransportError::new("Application Closed", DumbError));
                     }
-                    Err(_e) => {
-                        panic!("Other error");
+                    Err(err) => {
+                        return Err(TransportError::new("Other error", err));
                     }
                     Ok(s) => s,
                 };
