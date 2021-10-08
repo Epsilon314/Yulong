@@ -4,5 +4,5 @@ mod pbft_message {
 }
 
 fn main() {
-    println!("Hello, world!");
+    
 }

@@ -101,7 +101,7 @@ mod test {
 
         let msg_bytes = msg.into_bytes();
 
-        println!("Serialized msg: {:?}", msg_bytes);
+        // println!("Serialized msg: {:?}", msg_bytes);
 
         let dse_msg = message::PbftMessage::from_bytes(&msg_bytes).ok().unwrap();
         assert_eq!(msg.round, dse_msg.round);

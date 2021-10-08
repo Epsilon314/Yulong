@@ -5,6 +5,7 @@ use std::{pin::Pin};
 use async_trait::async_trait;
 use tokio;
 use yulong_network::identity::crypto::{PublicKey};
+use log::{warn, info};
 
 #[derive(Clone, Copy)]
 pub struct TcpContext {}
@@ -84,9 +85,11 @@ impl Transport for TcpContext {
     async fn listen(addr: &std::net::SocketAddr) -> Result<Self::Listener, TransportError> {
         match tokio::net::TcpListener::bind(addr).await {
             Ok(std_listener) => {
+                info!("Listen on {}", &addr);
                 Ok(std_listener)
             }
             Err(error) => {
+                warn!("Listen on {} failed", &addr);
                 Err(TransportError::new(
                     format!("Transport error happened when listening on {:?}", addr),
                     error))
@@ -99,9 +102,11 @@ impl Transport for TcpContext {
 
         match tokio::net::TcpStream::connect(addr).await {
             Ok(std_stream) => {
+                info!("connected to: {}", addr);
                 Ok(Self::Stream::from(std_stream))
             }
             Err(error) => {
+                warn!("connected to: {} failed", addr);
                 Err(TransportError::new(
                 format!("Transport Error happens when connecting to {:?}", addr), error))
             }
@@ -115,6 +120,7 @@ impl Transport for TcpContext {
         match listener.accept().await {
             Ok((stream, remote_addr)) => {
                 let stream = Self::Stream::from(stream);
+                info!("accept connection from {}", remote_addr);
                 Ok(IngressStream{
                     remote_addr: remote_addr, 
                     stream: stream, 

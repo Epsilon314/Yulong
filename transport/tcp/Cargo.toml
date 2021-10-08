@@ -12,3 +12,5 @@ yulong_network = {path = "../../network"}
 tokio = {version = "1.11.0", features = ["net"]}
 futures = "0.3.8"
 async-trait = "0.1.51"
+
+log = "0.4.14"
