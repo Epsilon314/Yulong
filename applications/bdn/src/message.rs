@@ -83,16 +83,15 @@ impl<T: Transport> MessageReader<T> {
         Self {inner: inner_reader}
     }
 
-    pub async fn read_message(&mut self) -> Result<Message, DeserializeError> {
+    pub async fn read_message(&mut self) -> Result<Option<Message>, DeserializeError> {
 
         // first read the length 
         let mut len_buf = [0_u8; 2];
         let read_result = self.inner.read_exact(&mut len_buf).await;
 
         if read_result.is_err() {
-            return Err(DeserializeError::new(
-                "read length failed", read_result.unwrap_err()
-            ));
+            // reach EOF, no more message
+            return Ok(None);
         }
 
         let len = u16::from_be_bytes(len_buf) as usize;
@@ -104,7 +103,7 @@ impl<T: Transport> MessageReader<T> {
                 "read payload failed", read_result.unwrap_err()
             ));
         }
-        Ok(Message::new(&payload_buf).unwrap())
+        Ok(Some(Message::new(&payload_buf).unwrap()))
     }
 }
 
