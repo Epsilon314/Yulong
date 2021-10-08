@@ -6,16 +6,16 @@ use sm_signer::{SmPubKey, SmSecKey};
 use crate::peer_id;
 use prost::Message;
 
-pub trait SeDer: Sized {
+pub trait AsBytes: Sized {
     fn into_bytes(&self) -> Vec<u8>;
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError>;
 }
 
 pub trait Signer: 'static + Send {
 
-    type PK: SeDer + Send + Clone;
-    type SK: SeDer + Send + Clone;
-    type SIG: SeDer + Send;
+    type PK: AsBytes + Send + Clone;
+    type SK: AsBytes + Send + Clone;
+    type SIG: AsBytes + Send;
     
     fn keygen(&self) -> (Self::PK, Self::SK);
 
@@ -29,7 +29,7 @@ pub enum PublicKey {
     NoKey
 }
 
-impl SeDer for PublicKey {
+impl AsBytes for PublicKey {
 
     fn into_bytes(&self) -> Vec<u8> {
         let proto_message = match self {
@@ -99,7 +99,7 @@ pub struct NoneSigner {}
 #[derive(Clone, Copy)]
 pub struct NoneKey {}
 
-impl SeDer for NoneKey {
+impl AsBytes for NoneKey {
     fn into_bytes(&self) -> Vec<u8> {
         unimplemented!()
     }

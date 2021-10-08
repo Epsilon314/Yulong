@@ -1,24 +1,19 @@
-use futures::{AsyncReadExt, AsyncWriteExt};
+use futures::{AsyncWriteExt};
 use yulong::utils::{
     bidirct_hashmap::BidirctHashmap,
 };
 
-use yulong_network::{
-    identity::{Peer, Me}, 
-    transport::{Transport},
-};
+use yulong_network::{identity::{Me, Peer, crypto::AsBytes}, transport::Transport};
 
-use std::{
-    collections::HashMap,
-    net::{
+use std::{collections::HashMap, net::{
         SocketAddr, IpAddr, Ipv4Addr,
-    },
-    sync::mpsc::{Sender},
-};
+    }, sync::mpsc::Sender,};
 
 use log::{warn, info};
 
-use crate::route::Route;
+use async_std::io::BufReader;
+
+use crate::{message, route::Route};
 
 pub struct BDN<T: Transport> {
 
@@ -103,38 +98,76 @@ impl<T: Transport> BDN<T> {
     }
 
     pub async fn send_to(&mut self, dst: Peer, msg: &[u8]) {
+
+        // send through an existing stream 
         if let Some(wstream) = self.w_stream.get_mut(&dst) {
             // use existing connection to dst
-            wstream.write_all(msg).await.unwrap();
+            wstream.write_all(msg).await.unwrap_or_else(|err| {
+                warn!("BDN::send_to write error: {}", err);
+            });
+            return;
         }
-        else {
-            // connect and send
+
+        // no established stream, connect and send
+        let addr = self.address_book.get_by_key(&dst);
+        
+        if addr.is_none() {
+            warn!("BDN::send_to unknown dst: {:?}", dst.get_id());
+            return;
+        }
+
+        let addr = addr.unwrap();
+        match T::connect(addr).await {
+            
+            Ok(mut wstream) => {
+                wstream.write_all(msg).await.unwrap_or_else(|err| {
+                    warn!("BDN::send_to write error: {}", err);
+                });
+                self.w_stream.insert(dst, wstream);
+            }
+
+            Err(error) => {
+                warn!("BDN::send_to encounter an error when connecting {}. Error: {}", addr, error);
+            }
         }
     }
 
     pub async fn broadcast(&self, src: Peer, msg: &[u8]) {
-        
-        
-        
         unimplemented!()
     }
 
-    pub async fn handle_ingress(mut s: <T as Transport>::Stream, sender: Sender<Vec<u8>>) {
-        let mut buf = [0; 2048];
 
-        match s.read(&mut buf).await {
-            Ok(len) => {
-                info!("BDN::handle_ingress: read {} bytes", &len);
-                // collect a full message and then invoke callback
-                match sender.send(buf[0..len].to_vec()) {
-                    Ok(_) => {}
-                    Err(error) => {
-                        warn!("BDN::handle_ingress: {}", error);
-                    }
-                } 
+    pub async fn send_to_indirect(&self, dst: Peer, msg: &[u8]) {
+        unimplemented!()
+    }
+
+    pub async fn handle_ingress(s: <T as Transport>::Stream, sender: Sender<Vec<u8>>) {
+        
+        // a buffed reader
+
+        // let mut reader = 
+        //    BufReader::with_capacity(message::MSG_MAXLEN, s);
+
+        let mut msg_reader = message::MessageReader::<T>::new(
+            BufReader::with_capacity(message::MSG_MAXLEN, s)
+        );
+
+        loop {
+
+            let msg= msg_reader.read_message().await;
+
+            if msg.is_err() {
+                warn!("BDN::handle_ingress: {}", msg.unwrap_err());
+                continue;
             }
-            Err(error) => {
-                warn!("BDN::handle_ingress: {}", error);
+
+            let msg = msg.unwrap();
+            let raw_msg = msg.get_payload();
+
+            info!("BDN::handle_ingress: read {} bytes", raw_msg.len());
+            let send_res = sender.send(raw_msg);
+            if send_res.is_err() {
+                warn!("BDN::handle_ingress: {}", send_res.unwrap_err());
             }
         }
     }
@@ -149,24 +182,23 @@ mod test {
     use async_std::{self};
     use yulong::log;
 
-    struct User {
-
-    }
-
-    impl User {
-        
-        fn process(&mut self, buf: &[u8]) {
-            println!("{:?}", buf);
-        }
-
-    }
-
     #[async_std::test]
-    async fn new_bdn() {
+    async fn bdn_1() {
 
         log::setup_logger().unwrap();
         
         let mut bdn = BDN::<TcpContext>::new(9001).await;
+
+        println!("New BDN client at: {:?}", bdn.local_identity.raw_id);
+        bdn.run().await;
+    }
+
+    #[async_std::test]
+    async fn bdn_2() {
+
+        log::setup_logger().unwrap();
+        
+        let mut bdn = BDN::<TcpContext>::new(9002).await;
 
         println!("New BDN client at: {:?}", bdn.local_identity.raw_id);
         // bdn.run().await;
