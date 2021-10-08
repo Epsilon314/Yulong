@@ -32,6 +32,7 @@ impl Display for DeserializeError {
     }
 }
 
+#[derive(Debug)]
 pub struct TransportError {
     describe: String,
     #[allow(dead_code)]
@@ -72,5 +73,27 @@ impl TryfromSliceError {
 impl Display for TryfromSliceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "TryfromSliceError error: {}", self.describe)
+    }
+}
+
+#[derive(Debug)]
+pub struct BadMessageError {
+    describe: String,
+    #[allow(dead_code)]
+    boxed_error: Box<dyn Error>
+}
+
+impl BadMessageError {
+    pub fn new<S: ToString>(des: S, err: impl Error + 'static) -> Self {
+        Self {
+            describe: des.to_string(),
+            boxed_error: Box::new(err)
+        }
+    }
+}
+
+impl Display for BadMessageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "BadMessage error: {}", self.describe)
     }
 }

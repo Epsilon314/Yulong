@@ -1,5 +1,5 @@
 use libsm::sm2;
-use crate::identity::crypto::{SeDer, Signer};
+use crate::identity::crypto::{AsBytes, Signer};
 use crate::error::{DeserializeError, DumbError};
 
 pub struct SmSigner {
@@ -28,7 +28,7 @@ pub struct SmSig {
     sig: sm2::signature::Signature
 }
 
-impl SeDer for SmPubKey {
+impl AsBytes for SmPubKey {
     fn into_bytes(&self) -> Vec<u8> {
         let cx = sm2::signature::SigCtx::new();
         cx.serialize_pubkey(&self.pk, true)
@@ -47,7 +47,7 @@ impl SeDer for SmPubKey {
     }
 }
 
-impl SeDer for SmSecKey {
+impl AsBytes for SmSecKey {
     fn into_bytes(&self) -> Vec<u8> {
         let cx = sm2::signature::SigCtx::new();
         cx.serialize_seckey(&self.sk)
@@ -66,7 +66,7 @@ impl SeDer for SmSecKey {
     }
 }
 
-impl SeDer for SmSig {
+impl AsBytes for SmSig {
     fn into_bytes(&self) -> Vec<u8> {
         self.sig.der_encode()
     }

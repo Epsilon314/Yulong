@@ -3,7 +3,7 @@ use yulong_network::{
     error::DeserializeError,
     identity::{Peer,
         crypto::{
-            SeDer,
+            AsBytes,
         },
     }
 };
@@ -23,7 +23,7 @@ pub struct PbftMessage {
     pub payload: Vec<u8>,
 }
 
-impl SeDer for PbftMessage {
+impl AsBytes for PbftMessage {
 
     fn into_bytes(&self) -> Vec<u8> {
 
@@ -70,7 +70,7 @@ mod test {
 
     use yulong_network::identity::{
         crypto::{
-            SeDer,
+            AsBytes,
             Signer,
             sm_signer::SmSigner,
             PublicKey,

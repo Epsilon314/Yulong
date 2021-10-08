@@ -6,7 +6,7 @@ use rand::Rng;
 use std::hash::Hash;
 
 use crate::{error::DumbError, error::TryfromSliceError};
-use crypto::{PublicKey, PrivateKey, Signer, SeDer, sm_signer::SmSigner};
+use crypto::{PublicKey, PrivateKey, Signer, AsBytes, sm_signer::SmSigner};
 
 pub struct Me {
     pub raw_id: [u8; Peer::ID_SIZE],
