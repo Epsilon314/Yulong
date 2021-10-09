@@ -1,7 +1,7 @@
 use log::{debug, error, info, trace, warn};
 use chrono;
 
-pub fn setup_logger() -> Result<(), fern::InitError> {
+pub fn setup_logger(log_file_name: &str) -> Result<(), fern::InitError> {
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -14,7 +14,7 @@ pub fn setup_logger() -> Result<(), fern::InitError> {
         })
         .level(log::LevelFilter::Debug)
         .chain(std::io::stdout())
-        .chain(fern::log_file("output.log")?)
+        .chain(fern::log_file(log_file_name.to_owned() + ".log")?)
         .apply()?;
     Ok(())
 }
