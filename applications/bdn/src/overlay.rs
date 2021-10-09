@@ -2,17 +2,12 @@ use futures::{AsyncWriteExt};
 use yulong::utils::{
     bidirct_hashmap::BidirctHashmap,
 };
-
 use yulong_network::{identity::{Me, Peer, crypto::AsBytes}, transport::Transport};
-
 use std::{collections::HashMap, net::{
         SocketAddr, IpAddr, Ipv4Addr,
     }, sync::mpsc};
-
-use log::{warn, info};
-
+use log::{warn, info, debug};
 use async_std::{io::BufReader};
-
 use crate::{message::{self, Message}, route::Route};
 
 
@@ -21,16 +16,21 @@ type MessageWithIp = (IpAddr, Vec<u8>);
 pub struct BDN<T: Transport> {
 
     local_identity: Me,
+
     address_book: BidirctHashmap<Peer, SocketAddr>,
+
     w_stream: HashMap<Peer, <T as Transport>::Stream>,
+
     msg_sender: mpsc::Sender<MessageWithIp>,
     msg_receiver: mpsc::Receiver<MessageWithIp>,
+
+    route: Route<T>,
 }
 
 
 impl<T: Transport> BDN<T> {
     
-    pub async fn new() -> Self {
+    pub fn new() -> Self {
 
         let (sender, receiver) = 
             mpsc::channel::<MessageWithIp>();
@@ -43,11 +43,13 @@ impl<T: Transport> BDN<T> {
             w_stream: HashMap::<Peer, <T as Transport>::Stream>::new(),
             msg_sender: sender,
             msg_receiver: receiver,
+            route: Route::new(),
         }
     }
 
+
     // accept incoming connections and spawn tasks to serve them
-    pub async fn run(listen_port: u16, msg_sender: mpsc::Sender<MessageWithIp>) {
+    pub async fn listen(listen_port: u16, msg_sender: mpsc::Sender<MessageWithIp>) {
 
         let mut listener = T::listen(
             &SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), listen_port)
@@ -141,13 +143,26 @@ impl<T: Transport> BDN<T> {
         }
     }
 
-    pub async fn broadcast(&self, src: Peer, msg: &[u8]) {
-        unimplemented!()
+
+    pub async fn broadcast(&mut self, src: Peer, msg: &[u8]) {
+
+        let relay_list = self.route.get_relay(&src, &self.local_identity.peer);
+
+        for peer in relay_list {
+            self.send_to(&peer, msg).await
+        }
     }
 
 
-    pub async fn send_to_indirect(&self, dst: Peer, msg: &[u8]) {
-        unimplemented!()
+    pub async fn send_to_indirect(&mut self, dst: Peer, msg: &[u8]) {
+        
+        let next = self.route.get_next_hop(&dst);
+
+        if next.is_none() {
+            warn!("Send to {} failed: No route.", &dst);
+            return;
+        }
+        self.send_to(&next.unwrap(), msg).await;
     }
 
     pub async fn handle_ingress(
@@ -180,7 +195,7 @@ impl<T: Transport> BDN<T> {
 
             let raw_msg = msg.unwrap().get_payload();
 
-            info!("BDN::handle_ingress: read {} bytes", raw_msg.len());
+            debug!("BDN::handle_ingress: read {} bytes", raw_msg.len());
             let send_res = sender.send((remote_ip ,raw_msg));
             if send_res.is_err() {
                 warn!("BDN::handle_ingress: {}", send_res.unwrap_err());
@@ -196,6 +211,8 @@ mod test {
 
     use super::BDN;
     use yulong_tcp::TcpContext;
+    use yulong_quic::QuicContext;
+
     use async_std::{self};
     use yulong::log;
     use yulong_network::identity::Peer;
@@ -204,13 +221,13 @@ mod test {
     #[async_std::test]
     async fn bdn_1() {
 
-        log::setup_logger().unwrap();
+        log::setup_logger("bdn_test1").unwrap();
         
-        let mut bdn = BDN::<TcpContext>::new().await;
+        let mut bdn = BDN::<QuicContext>::new();
 
         let peer = Peer::from_random();
 
-        println!("New BDN client at: {:?}", bdn.local_identity.raw_id);
+        println!("New BDN client at: {:?}", bdn.local_identity.peer.get_id());
         bdn.address_book.insert(
             peer.clone(),
             SocketAddr::V4(SocketAddrV4::from_str("127.0.0.1:9002").unwrap())
@@ -219,7 +236,7 @@ mod test {
         let payload = [42_u8; 2000];
         
         let server = async_std::task::spawn(
-            BDN::<TcpContext>::run(9001, bdn.msg_sender.clone())
+            BDN::<QuicContext>::listen(9001, bdn.msg_sender.clone())
         );
 
         bdn.connect().await;
@@ -234,13 +251,13 @@ mod test {
     #[async_std::test]
     async fn bdn_2() {
 
-        log::setup_logger().unwrap();
+        log::setup_logger("bdn_test2").unwrap();
         
-        let mut bdn = BDN::<TcpContext>::new().await;
+        let mut bdn = BDN::<QuicContext>::new();
 
         let peer = Peer::from_random();
 
-        println!("New BDN client at: {:?}", bdn.local_identity.raw_id);
+        println!("New BDN client at: {:?}", bdn.local_identity.peer.get_id());
         bdn.address_book.insert(
             peer.clone(),
             SocketAddr::V4(SocketAddrV4::from_str("127.0.0.1:9001").unwrap())
@@ -249,7 +266,7 @@ mod test {
         let payload = [42_u8; 2000];
         
         let server = async_std::task::spawn(
-            BDN::<TcpContext>::run(9002, bdn.msg_sender.clone())
+            BDN::<QuicContext>::listen(9002, bdn.msg_sender.clone())
         );
         
         bdn.connect().await;

@@ -3,14 +3,13 @@ pub mod crypto;
 use libsm::sm3;
 use rand;
 use rand::Rng;
-use std::hash::Hash;
+use std::{fmt::{self,Display,Debug}, hash::Hash};
 
 use crate::{error::DumbError, error::TryfromSliceError};
 use crypto::{PublicKey, PrivateKey, Signer, AsBytes, sm_signer::SmSigner};
 
 pub struct Me {
-    pub raw_id: [u8; Peer::ID_SIZE],
-    pub pubkey: PublicKey,
+    pub peer: Peer,
     pub privatekey: PrivateKey
 }
 
@@ -26,9 +25,8 @@ impl Me {
         ).raw_id;
         
         Self {
-            raw_id: id,
-            pubkey: PublicKey::SM2(pk),
-            privatekey: PrivateKey::SM2(sk)
+            peer: Peer { raw_id: id, pubkey: PublicKey::SM2(pk) },
+            privatekey: PrivateKey::SM2(sk),
         }
     }
 
@@ -36,8 +34,10 @@ impl Me {
         let id = Peer::from_public_key(&pk).raw_id;
         
         Self {
-            raw_id: id,
-            pubkey: pk,
+            peer: Peer {
+                raw_id: id,
+                pubkey: pk,
+            },
             privatekey: sk
         }
     }
@@ -63,6 +63,18 @@ impl PartialEq for Peer {
 }
 
 impl Eq for Peer {}
+
+impl Display for Peer{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Peer id: {:?}", self.get_id())
+    }
+}
+
+impl Debug for Peer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Peer").field("raw_id", &self.raw_id).field("pubkey", &self.pubkey.into_bytes()).finish()
+    }
+}
 
 impl Peer {
 

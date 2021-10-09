@@ -1,6 +1,5 @@
 use std::{convert::TryInto, mem::size_of};
 
-use log::warn;
 use yulong_network::{
     identity::crypto::AsBytes,
     error::DeserializeError,
@@ -11,7 +10,7 @@ use yulong_network::{
 
 use crate::bdn_message::BdnMessage;
 use async_std::io::BufReader;
-use futures::{AsyncReadExt, AsyncWriteExt};
+use futures::{AsyncReadExt};
 
 pub const MSG_MAXLEN: usize = 2048; //bytes
 
@@ -112,7 +111,6 @@ impl<T: Transport> MessageReader<T> {
 mod test {
     
     use super::*;
-    use yulong_tcp::TcpContext;
 
     #[test]
     fn message_serde() {

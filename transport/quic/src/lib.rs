@@ -12,6 +12,7 @@ use std::{fs, io};
 use yulong_network::error::TransportError;
 use yulong_network::identity::crypto::PublicKey;
 use yulong_network::transport::{IngressStream, Transport};
+use log::{info};
 
 #[derive(Clone, Copy)]
 pub struct QuicContext {}
@@ -78,7 +79,7 @@ impl Transport for QuicContext {
         let (cert, key) = match fs::read(&cert_path).and_then(|x| Ok((x, fs::read(&key_path)?))) {
             Ok(x) => x,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                println!("generating self-signed certificate");
+                info!("generating self-signed certificate");
                 let cert = rcgen::generate_simple_self_signed(vec!["quic".into()]).unwrap();
                 let key = cert.serialize_private_key_der();
                 let cert = cert.serialize_der().unwrap();
@@ -102,7 +103,7 @@ impl Transport for QuicContext {
         endpoint.listen(server_config.build());
 
         let (endpoint, incoming) = endpoint.bind(&addr).unwrap();
-        println!("listening on {}", endpoint.local_addr().unwrap());
+        info!("Listening on {}", endpoint.local_addr().unwrap());
 
         Ok(incoming)
     }
