@@ -8,16 +8,16 @@ use std::{collections::HashMap, net::{
     }, sync::mpsc};
 use log::{warn, info, debug};
 use async_std::{io::BufReader};
-use crate::{message::{self, Message}, route::Route};
+use crate::{message, route::Route};
+use crate::common::{SocketAddrBi, DEFAULT_BDN_PORT, MSG_MAXLEN, MessageWithIp};
 
-
-type MessageWithIp = (IpAddr, Vec<u8>);
 
 pub struct BDN<T: Transport> {
 
     local_identity: Me,
 
-    address_book: BidirctHashmap<Peer, SocketAddr>,
+    // peer's listening socket
+    address_book: BidirctHashmap<Peer, SocketAddrBi>,
 
     w_stream: HashMap<Peer, <T as Transport>::Stream>,
 
@@ -38,7 +38,7 @@ impl<T: Transport> BDN<T> {
         Self {
             local_identity: Me::new(),
             
-            address_book: BidirctHashmap::<Peer, SocketAddr>::new(),
+            address_book: BidirctHashmap::<Peer, SocketAddrBi>::new(),
             
             w_stream: HashMap::<Peer, <T as Transport>::Stream>::new(),
             msg_sender: sender,
@@ -61,11 +61,14 @@ impl<T: Transport> BDN<T> {
                 // a new incoming connection
 
                 let ip = istream.remote_addr.ip();
+                let incoming_port = istream.remote_addr.port();
+                let socket = SocketAddrBi::new(ip, DEFAULT_BDN_PORT, Some(incoming_port));
+
                 let sender = msg_sender.clone();
                 
                 async_std::task::spawn(
                     async move {
-                        Self::handle_ingress(istream.stream, sender, ip).await;
+                        Self::handle_ingress(istream.stream, sender, socket).await;
                 });
 
                 true
@@ -85,7 +88,10 @@ impl<T: Transport> BDN<T> {
             if self.w_stream.contains_key(peer) {
                 continue;
             }
-            match T::connect(addr).await {
+
+            let con_socket = SocketAddr::new(addr.ip(), addr.listen_port());
+
+            match T::connect(&con_socket).await {
                 Ok(stream) => {
                     self.w_stream.insert(
                         peer.clone(),
@@ -99,20 +105,23 @@ impl<T: Transport> BDN<T> {
         }
     }
 
-    pub async fn send_to(&mut self, dst: &Peer, msg: &[u8]) {
+    pub async fn send_to(&mut self, dst: &Peer, msg: &mut message::OverlayMessage) {
+        
+        msg.set_from(&self.local_identity.peer);
 
-        let wrapped_msg = Message::new(msg);
-        if wrapped_msg.is_err() {
-            warn!("BDN::send_to: {}", wrapped_msg.unwrap_err());
+        let msg_bytes = msg.into_bytes();
+
+        if msg_bytes.is_err() {
+            warn!("BDN::send_to: {}", msg_bytes.unwrap_err());
             return;
         }
+        let msg_bytes = msg_bytes.unwrap();
 
-        let wrapped_msg = wrapped_msg.unwrap();
+        // send through an existing stream
 
-        // send through an existing stream 
         if let Some(wstream) = self.w_stream.get_mut(&dst) {
             // use existing connection to dst
-            wstream.write_all(&wrapped_msg.into_bytes()).await.unwrap_or_else(|err| {
+            wstream.write_all(&msg_bytes).await.unwrap_or_else(|err| {
                 warn!("BDN::send_to write error: {}", err);
             });
             return;
@@ -122,15 +131,17 @@ impl<T: Transport> BDN<T> {
         let addr = self.address_book.get_by_key(&dst);
         
         if addr.is_none() {
-            warn!("BDN::send_to unknown dst: {:?}", dst.get_id());
+            warn!("BDN::send_to unknown dst: {:?}", &dst.get_id());
             return;
         }
 
         let addr = addr.unwrap();
-        match T::connect(addr).await {
+        let con_socket = SocketAddr::new(addr.ip(), addr.listen_port());
+
+        match T::connect(&con_socket).await {
             
             Ok(mut wstream) => {
-                wstream.write_all(&wrapped_msg.into_bytes()).await
+                wstream.write_all(&msg_bytes).await
                     .unwrap_or_else( |err| {
                         warn!("BDN::send_to write error: {}", err);
                     });
@@ -138,13 +149,13 @@ impl<T: Transport> BDN<T> {
             }
 
             Err(error) => {
-                warn!("BDN::send_to encounter an error when connecting {}. Error: {}", addr, error);
+                warn!("BDN::send_to encounter an error when connecting {}. Error: {}", con_socket, error);
             }
         }
     }
 
 
-    pub async fn broadcast(&mut self, src: Peer, msg: &[u8]) {
+    pub async fn broadcast(&mut self, src: &Peer, msg: &mut message::OverlayMessage) {
 
         let relay_list = self.route.get_relay(&src, &self.local_identity.peer);
 
@@ -154,7 +165,7 @@ impl<T: Transport> BDN<T> {
     }
 
 
-    pub async fn send_to_indirect(&mut self, dst: Peer, msg: &[u8]) {
+    pub async fn send_to_indirect(&mut self, dst: &Peer, msg: &mut message::OverlayMessage) {
         
         let next = self.route.get_next_hop(&dst);
 
@@ -168,12 +179,12 @@ impl<T: Transport> BDN<T> {
     pub async fn handle_ingress(
         s: <T as Transport>::Stream,
         sender: mpsc::Sender<MessageWithIp>,
-        remote_ip: IpAddr
+        remote_sock: SocketAddrBi
     ) {
 
         // create a message reader with an inner buffered reader
         let mut msg_reader = message::MessageReader::<T>::new(
-            BufReader::with_capacity(message::MSG_MAXLEN, s)
+            BufReader::with_capacity(MSG_MAXLEN, s)
         );
 
         loop {
@@ -193,10 +204,10 @@ impl<T: Transport> BDN<T> {
                 break;
             }
 
-            let raw_msg = msg.unwrap().get_payload();
+            let raw_msg = msg.unwrap().payload();
 
             debug!("BDN::handle_ingress: read {} bytes", raw_msg.len());
-            let send_res = sender.send((remote_ip ,raw_msg));
+            let send_res = sender.send((remote_sock ,raw_msg));
             if send_res.is_err() {
                 warn!("BDN::handle_ingress: {}", send_res.unwrap_err());
             }
@@ -204,10 +215,40 @@ impl<T: Transport> BDN<T> {
     }
 }
 
+impl<T: Transport> Iterator for BDN<T> {
+    type Item = MessageWithIp;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        
+        let msg = self.msg_receiver.recv();
+        
+        if msg.is_err() {
+            warn!("BDN::next error {}", msg.unwrap_err());
+            return None;
+        }
+
+        // relay stuff
+
+        // get source from message
+
+        let (from, dec_msg) = msg.clone().unwrap();
+        if let Some(peer) = self.address_book.get_by_value(&from) {
+            // let relay_list = self.route.get_relay(, peer);
+        }
+        else {
+            // log unknown 
+        }
+
+        Some(msg.unwrap())
+    }
+}
+
 
 #[cfg(test)]
 mod test {
-    use std::{net::{SocketAddrV4}, str::FromStr};
+    use std::{net::{IpAddr}, str::FromStr};
+
+    use crate::{message, overlay::SocketAddrBi};
 
     use super::BDN;
     use yulong_tcp::TcpContext;
@@ -226,24 +267,37 @@ mod test {
         let mut bdn = BDN::<QuicContext>::new();
 
         let peer = Peer::from_random();
+        let socket = SocketAddrBi::new(IpAddr::from_str("127.0.0.1").unwrap(), 9002_u16, None);
 
         println!("New BDN client at: {:?}", bdn.local_identity.peer.get_id());
         bdn.address_book.insert(
             peer.clone(),
-            SocketAddr::V4(SocketAddrV4::from_str("127.0.0.1:9002").unwrap())
+            socket,
         );
 
-        let payload = [42_u8; 2000];
+        let payload = [42_u8; 1900];
         
         let server = async_std::task::spawn(
             BDN::<QuicContext>::listen(9001, bdn.msg_sender.clone())
         );
 
+        let mut m1 = message::OverlayMessage::new(
+            0, &peer, &peer, &peer, &[1,2,3]);
+
+        let mut m2 = message::OverlayMessage::new(
+            0, &peer, &peer, &peer, &[1,2,3,4,5,6]);
+
+        let mut m3 = message::OverlayMessage::new(
+            0, &peer, &peer, &peer, &payload);
+
+        let mut m4 = message::OverlayMessage::new(
+            0, &peer, &peer, &peer, &[1,2,3]);
+
         bdn.connect().await;
-        bdn.send_to(&peer, &[1,2,3]).await;
-        bdn.send_to(&peer, &[1,2,3,4,5,6]).await;
-        bdn.send_to(&peer, &payload).await;
-        bdn.send_to(&peer, &[1,2,3]).await;
+        bdn.send_to(&peer, &mut m1).await;
+        bdn.send_to(&peer, &mut m2).await;
+        bdn.send_to(&peer, &mut m3).await;
+        bdn.send_to(&peer, &mut m4).await;
 
         server.await;
     }
@@ -256,24 +310,38 @@ mod test {
         let mut bdn = BDN::<QuicContext>::new();
 
         let peer = Peer::from_random();
+        let socket = SocketAddrBi::new(IpAddr::from_str("127.0.0.1").unwrap(), 9001_u16, None);
 
         println!("New BDN client at: {:?}", bdn.local_identity.peer.get_id());
         bdn.address_book.insert(
             peer.clone(),
-            SocketAddr::V4(SocketAddrV4::from_str("127.0.0.1:9001").unwrap())
+            socket,
         );
 
-        let payload = [42_u8; 2000];
+        let payload = [42_u8; 1900];
         
         let server = async_std::task::spawn(
             BDN::<QuicContext>::listen(9002, bdn.msg_sender.clone())
         );
         
+        let mut m1 = message::OverlayMessage::new(
+            0, &peer, &peer, &peer, &[1,2,3]);
+
+        let mut m2 = message::OverlayMessage::new(
+            0, &peer, &peer, &peer, &[1,2,3,4,5,6]);
+
+        let mut m3 = message::OverlayMessage::new(
+            0, &peer, &peer, &peer, &payload);
+
+        let mut m4 = message::OverlayMessage::new(
+            0, &peer, &peer, &peer, &[1,2,3]);
+
         bdn.connect().await;
-        bdn.send_to(&peer, &[1,2,3]).await;
-        bdn.send_to(&peer, &[1,2,3,4,5,6]).await;
-        bdn.send_to(&peer, &payload).await;
-        bdn.send_to(&peer, &[1,2,3]).await;
+        bdn.send_to(&peer, &mut m1).await;
+        bdn.send_to(&peer, &mut m2).await;
+        bdn.send_to(&peer, &mut m3).await;
+        bdn.send_to(&peer, &mut m4).await;
+
         server.await;
     }
 

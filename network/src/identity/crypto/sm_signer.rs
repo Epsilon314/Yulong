@@ -1,6 +1,6 @@
 use libsm::sm2;
 use crate::identity::crypto::{AsBytes, Signer};
-use crate::error::{DeserializeError, DumbError};
+use crate::error::{DeserializeError, SerializeError, DumbError};
 
 pub struct SmSigner {
     ctx: sm2::signature::SigCtx
@@ -29,9 +29,9 @@ pub struct SmSig {
 }
 
 impl AsBytes for SmPubKey {
-    fn into_bytes(&self) -> Vec<u8> {
+    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
         let cx = sm2::signature::SigCtx::new();
-        cx.serialize_pubkey(&self.pk, true)
+        Ok(cx.serialize_pubkey(&self.pk, true))
     }
 
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
@@ -48,9 +48,9 @@ impl AsBytes for SmPubKey {
 }
 
 impl AsBytes for SmSecKey {
-    fn into_bytes(&self) -> Vec<u8> {
+    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
         let cx = sm2::signature::SigCtx::new();
-        cx.serialize_seckey(&self.sk)
+        Ok(cx.serialize_seckey(&self.sk))
     }
 
     fn from_bytes(buf: &[u8]) -> Result<Self, crate::error::DeserializeError> {
@@ -67,8 +67,8 @@ impl AsBytes for SmSecKey {
 }
 
 impl AsBytes for SmSig {
-    fn into_bytes(&self) -> Vec<u8> {
-        self.sig.der_encode()
+    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
+        Ok(self.sig.der_encode())
     }
 
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {

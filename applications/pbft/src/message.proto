@@ -9,9 +9,6 @@ message proto_pbft_message {
     uint32 msg_no = 2;
     uint32 msg_type = 3;
     
-    bytes dst_id = 4;
-    bytes src_id = 5;
-    
     bytes signer_id = 6;
     
     bytes proof = 7;

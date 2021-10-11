@@ -98,7 +98,8 @@ impl Peer {
             _ => {
                 
                 let mut hash = sm3::hash::Sm3Hash::new(
-                    &public_key.into_bytes()
+                    // PublicKey::into_bytes do not throw error, safe unwrap
+                    &public_key.into_bytes().unwrap()
                 );
 
                 Self {

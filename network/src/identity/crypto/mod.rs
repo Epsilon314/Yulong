@@ -1,13 +1,13 @@
 #![allow(unused_variables)]
 pub mod sm_signer;
 
-use crate::error::{DeserializeError, DumbError};
+use crate::error::{DeserializeError, SerializeError, DumbError};
 use sm_signer::{SmPubKey, SmSecKey};
 use crate::peer_id;
 use prost::Message;
 
 pub trait AsBytes: Sized {
-    fn into_bytes(&self) -> Vec<u8>;
+    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError>;
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError>;
 }
 
@@ -31,13 +31,15 @@ pub enum PublicKey {
 
 impl AsBytes for PublicKey {
 
-    fn into_bytes(&self) -> Vec<u8> {
+    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
         let proto_message = match self {
 
             PublicKey::SM2(key) => {
                 peer_id::PublicKey {
                     r#type: peer_id::CryptoType::Sm2 as i32,
-                    data: key.into_bytes()
+
+                    // SmPubkey::into_bytes do not throw error, safe unwrap
+                    data: key.into_bytes().unwrap() 
                 }
             }
 
@@ -50,7 +52,7 @@ impl AsBytes for PublicKey {
         };
         let mut buf = Vec::with_capacity(proto_message.encoded_len());
         proto_message.encode(&mut buf).unwrap();
-        buf
+        Ok(buf)
     }
 
     fn from_bytes(bytes: &[u8]) -> Result<Self, DeserializeError> {
@@ -100,7 +102,7 @@ pub struct NoneSigner {}
 pub struct NoneKey {}
 
 impl AsBytes for NoneKey {
-    fn into_bytes(&self) -> Vec<u8> {
+    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
         unimplemented!()
     }
 
