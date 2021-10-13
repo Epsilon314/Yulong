@@ -21,18 +21,21 @@ const RELAY_SCHEME_LSB: u32 = RELAY_FLAG_LSB - RELAY_SCHEME_LEN;
 const FANOUT_LSB: u32 = RELAY_SCHEME_LSB - FANOUT_LEN;
 const TTL_LSB: u32 = FANOUT_LSB - TTL_LEN;
 
-const MSG_TYPE_MASK: u32 = 
-    (((1 << MSG_TYPE_LEN) - 1) << MSG_TYPE_LSB) >> MSG_TYPE_LSB;
-
-const RELAY_SCHEME_MASK: u32 = 
-    (((1 << RELAY_SCHEME_LEN) - 1) << RELAY_SCHEME_LSB) >> RELAY_SCHEME_LSB;
+const MSG_TYPE_MASK: u32 = ((1 << MSG_TYPE_LEN) - 1) << MSG_TYPE_LSB;
+const RELAY_SCHEME_MASK: u32 = ((1 << RELAY_SCHEME_LEN) - 1) << RELAY_SCHEME_LSB;
+const FANOUT_MASK: u32 = ((1 << FANOUT_LEN) - 1) << FANOUT_LSB;
+const TTL_MASK: u32 = ((1 << TTL_LEN) - 1) << TTL_LSB;
 
 pub struct MsgHeader {}
 
 impl MsgHeader {
     fn set_header_field(head: &mut u32, value: u32, len: u32, lsb: u32) {
+
+        // set target field to all-zero
         let unset_mask: u32 = !(((1 << len) - 1) << lsb);
         *head &= unset_mask;
+
+        // set target field to value
         let set_mask = value << lsb;
         *head |= set_mask;
     }
@@ -71,7 +74,7 @@ impl Display for MsgTypeKind {
 impl MsgType {
 
     pub fn get_msg_type(n: u32) -> Option<MsgTypeKind> {
-        FromPrimitive::from_u32((n | MSG_TYPE_MASK) >> MSG_TYPE_LSB)
+        FromPrimitive::from_u32((n & MSG_TYPE_MASK) >> MSG_TYPE_LSB)
     }
 
 
@@ -87,6 +90,31 @@ impl MsgType {
         }
     }
 
+}
+
+
+
+pub struct RelayFlag {}
+
+impl RelayFlag {
+
+    pub fn get_relay_flag(n: u32) -> bool {
+        (n & (1 << RELAY_FLAG_LSB)) != 0
+    }
+
+    pub fn set_relay_flag(head: &mut u32, flag: bool) {
+        let value: u32;
+        
+        if flag {
+            value = 1;
+        }
+        else {
+            value = 0;
+        }
+
+        MsgHeader::set_header_field(head, value, 
+            RELAY_FLAG_LEN, RELAY_FLAG_LSB);
+    }
 }
 
 
@@ -119,7 +147,7 @@ impl Display for RelayMethodKind {
 impl RelayMethod {
     
     pub fn get_relay_method(n: u32) -> Option<RelayMethodKind> {
-        FromPrimitive::from_u32((n | RELAY_SCHEME_MASK) >> RELAY_SCHEME_LSB)
+        FromPrimitive::from_u32((n & RELAY_SCHEME_MASK) >> RELAY_SCHEME_LSB)
     }
 
 
@@ -134,4 +162,46 @@ impl RelayMethod {
             None
         }
     }
+}
+
+
+pub struct FanOut {}
+
+
+impl FanOut {
+
+    pub fn get_fan_out(n: u32) -> u32 {
+        (n & FANOUT_MASK) >> FANOUT_LSB
+    }
+
+    pub fn set_fan_out(head: &mut u32, fanout: u32) -> Option<()> {
+        if fanout > (1 << (FANOUT_LEN + 1)) - 1 {
+            return None;
+        }
+        MsgHeader::set_header_field(head, fanout, 
+            FANOUT_LEN, FANOUT_LSB);
+        Some(())
+    }
+}
+
+
+pub struct TTL {}
+
+
+impl TTL {
+
+    pub fn get_ttl(n: u32) -> u32 {
+        (n & TTL_MASK) >> TTL_LSB
+    }
+
+    
+    pub fn set_ttl(head: &mut u32, ttl: u32) -> Option<()> {
+        if ttl > (1 << (TTL_LEN + 1)) - 1 {
+            return None;
+        }
+        MsgHeader::set_header_field(head, ttl,
+            TTL_LEN, TTL_LSB);
+        Some(())
+    }
+
 }

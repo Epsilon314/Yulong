@@ -241,27 +241,32 @@ impl<T: Transport> Iterator for BDN<T> {
         // relay messages
         // todo: add relay flag & more parameters (extra field or use the msg_type as bitmap?)
 
-        
 
         // clone for modification
         let (from, mut incoming_msg) = msg.clone().unwrap();
 
-        let src = &incoming_msg.src();
-        incoming_msg.set_from(&self.local_identity.peer);
 
-        if let Some(peer) = self.address_book.get_by_value(&from) {
-            let relay_list = self.route.get_relay(src, peer);
-            for next_node in relay_list {
+        // todo: move to a relayer trait & impl it for each relay method
 
-                // send it in sequence
-                async_std::task::block_on(
-                    self.send_to(&next_node, &incoming_msg));
+        if incoming_msg.is_relay() {
+
+            let src = &incoming_msg.src();
+            incoming_msg.set_from(&self.local_identity.peer);
+    
+            if let Some(peer) = self.address_book.get_by_value(&from) {
+                let relay_list = self.route.get_relay(src, peer);
+                for next_node in relay_list {
+    
+                    // send it in sequence
+                    async_std::task::block_on(
+                        self.send_to(&next_node, &incoming_msg));
+                }
             }
-        }
-        else {
-            warn!("BDN::next unknown upstream node: {}", &from)
-        }
+            else {
+                warn!("BDN::next unknown upstream node: {}", &from)
+            }
 
+        }
         Some(msg.unwrap())
     }
 }

@@ -1,5 +1,6 @@
 use std::{convert::TryInto, mem::size_of};
 
+use log::warn;
 use yulong_network::{
     identity::crypto::AsBytes,
     identity::Peer,
@@ -79,16 +80,54 @@ impl OverlayMessage {
         self.dst_id = dst.to_owned()
     }
 
+    
     // deal with message type bitmap
 
     pub fn get_type(&self) -> Option<msg_header::MsgTypeKind> {
         msg_header::MsgType::get_msg_type(self.header)
     }
 
+    
     pub fn set_type(&mut self, msg_type: msg_header::MsgTypeKind) {
         msg_header::MsgType::set_msg_type(&mut self.header, msg_type).unwrap();
     }
 
+    
+    pub fn is_relay(&self) -> bool {
+        msg_header::RelayFlag::get_relay_flag(self.header)
+    }
+
+    
+    pub fn set_relay(&mut self, flag: bool) {
+        msg_header::RelayFlag::set_relay_flag(&mut self.header, flag);
+    }
+
+    
+    pub fn get_fanout(&self) -> u32 {
+        msg_header::FanOut::get_fan_out(self.header)
+    }
+
+
+    // todo: define an error for overflow
+    pub fn set_fanout(&mut self, fanout: u32) {
+        if msg_header::FanOut::set_fan_out(&mut self.header, fanout).is_none() {
+            warn!("OverlayMessage::set_fanout fan out value: {} overflow", fanout);
+        }
+    }
+
+
+    pub fn get_ttl(&self) -> u32 {
+        msg_header::TTL::get_ttl(self.header)
+    }
+
+
+    pub fn set_ttl(&mut self, ttl: u32) {
+        if msg_header::TTL::set_ttl(&mut self.header, ttl).is_none() {
+            warn!("OverlayMessage::set_ttl ttl value: {} overflow", ttl);
+        }
+    }
+
+    
     /// derserialize 
     fn der_protobf_payload(buf: &[u8]) -> Result<Self, DeserializeError> {
         match BdnMessage::decode(buf) {
@@ -269,9 +308,17 @@ mod test {
             &payload
         );
 
+        msg.set_relay(false);
+
         assert!(matches!(msg.get_type().unwrap(), MsgTypeKind::NET_MEASURE_MSG));
 
         msg.set_type(MsgTypeKind::PAYLOAD_MSG);
+
+        assert!(matches!(msg.get_type().unwrap(), MsgTypeKind::PAYLOAD_MSG));
+        assert_eq!(msg.is_relay(), false);
+        msg.set_relay(true);
+
+        assert_eq!(msg.is_relay(), true);
         assert!(matches!(msg.get_type().unwrap(), MsgTypeKind::PAYLOAD_MSG));
     }
 }
