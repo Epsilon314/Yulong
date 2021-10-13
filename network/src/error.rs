@@ -9,7 +9,7 @@ use std::fmt::{self, Debug, Display};
 pub struct DumbError;
 impl Display for DumbError {
     fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        unimplemented!("dumb error")
+        unreachable!("dumb error")
     }
 }
 
@@ -37,6 +37,10 @@ impl DeserializeError {
 
 impl Error for DeserializeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
+        
+        // todo: how to turn self.boxed_error into &(dyn Error + 'static) ?
+        // Sized is not satisfied 
+
         None
     }
 }

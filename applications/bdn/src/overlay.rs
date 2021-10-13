@@ -9,8 +9,8 @@ use std::{collections::HashMap, net::{
 use log::{warn, info, debug};
 use async_std::{io::BufReader};
 use crate::{message, route::Route};
-use crate::common::{SocketAddrBi, DEFAULT_BDN_PORT, MSG_MAXLEN, MessageWithIp};
-
+use crate::common::{SocketAddrBi, MessageWithIp};
+use crate::configs::{DEFAULT_BDN_PORT, MSG_MAXLEN};
 
 pub struct BDN<T: Transport> {
 
@@ -21,6 +21,7 @@ pub struct BDN<T: Transport> {
 
     w_stream: HashMap<Peer, <T as Transport>::Stream>,
 
+    #[allow(dead_code)]
     msg_sender: mpsc::Sender<MessageWithIp>,
     msg_receiver: mpsc::Receiver<MessageWithIp>,
 
@@ -54,6 +55,8 @@ impl<T: Transport> BDN<T> {
         let mut listener = T::listen(
             &SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), listen_port)
         ).await.ok().unwrap();
+
+        info!("BDN listening on {}", listen_port);
 
         while match T::accept(&mut listener).await {
             
@@ -105,9 +108,8 @@ impl<T: Transport> BDN<T> {
         }
     }
 
-    pub async fn send_to(&mut self, dst: &Peer, msg: &mut message::OverlayMessage) {
-        
-        msg.set_from(&self.local_identity.peer);
+
+    pub async fn send_to(&mut self, dst: &Peer, msg: &message::OverlayMessage) {
 
         let msg_bytes = msg.into_bytes();
 
@@ -155,7 +157,7 @@ impl<T: Transport> BDN<T> {
     }
 
 
-    pub async fn broadcast(&mut self, src: &Peer, msg: &mut message::OverlayMessage) {
+    pub async fn broadcast(&mut self, src: &Peer, msg: &message::OverlayMessage) {
 
         let relay_list = self.route.get_relay(&src, &self.local_identity.peer);
 
@@ -181,6 +183,9 @@ impl<T: Transport> BDN<T> {
         sender: mpsc::Sender<MessageWithIp>,
         remote_sock: SocketAddrBi
     ) {
+        
+        // incoming stream obviously has an incoming port, safe unwrap
+        info!("Start to serve {}{}", remote_sock.ip(), remote_sock.incoming_port().unwrap());
 
         // create a message reader with an inner buffered reader
         let mut msg_reader = message::MessageReader::<T>::new(
@@ -189,7 +194,7 @@ impl<T: Transport> BDN<T> {
 
         loop {
 
-            // read one message at a time
+            // read one message at a time, including deserialization 
             let msg= msg_reader.read_message().await;
 
             // encounter an ill-formed message
@@ -204,13 +209,18 @@ impl<T: Transport> BDN<T> {
                 break;
             }
 
-            let raw_msg = msg.unwrap().payload();
+            let overlay_msg = msg.unwrap();
 
-            debug!("BDN::handle_ingress: read {} bytes", raw_msg.len());
-            let send_res = sender.send((remote_sock ,raw_msg));
-            if send_res.is_err() {
-                warn!("BDN::handle_ingress: {}", send_res.unwrap_err());
-            }
+            debug!("BDN::handle_ingress: receive {} bytes payload",
+                overlay_msg.payload().len());
+
+            match sender.send((remote_sock ,overlay_msg)) {
+                Ok(_) => {}
+                Err(error) => {
+                    warn!("BDN::handle_ingress: {}", error);
+                    // log the error and continue, only EOF will shutdown the listening thread
+                }
+            };
         }
     }
 }
@@ -220,23 +230,36 @@ impl<T: Transport> Iterator for BDN<T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         
+        // get a message from the receiver queue
         let msg = self.msg_receiver.recv();
         
+        // no more messages in the receiver queue
         if msg.is_err() {
-            warn!("BDN::next error {}", msg.unwrap_err());
             return None;
         }
 
-        // relay stuff
+        // relay messages
+        // todo: add relay flag & more parameters (extra field or use the msg_type as bitmap?)
 
-        // get source from message
+        
 
-        let (from, dec_msg) = msg.clone().unwrap();
+        // clone for modification
+        let (from, mut incoming_msg) = msg.clone().unwrap();
+
+        let src = &incoming_msg.src();
+        incoming_msg.set_from(&self.local_identity.peer);
+
         if let Some(peer) = self.address_book.get_by_value(&from) {
-            // let relay_list = self.route.get_relay(, peer);
+            let relay_list = self.route.get_relay(src, peer);
+            for next_node in relay_list {
+
+                // send it in sequence
+                async_std::task::block_on(
+                    self.send_to(&next_node, &incoming_msg));
+            }
         }
         else {
-            // log unknown 
+            warn!("BDN::next unknown upstream node: {}", &from)
         }
 
         Some(msg.unwrap())
@@ -254,10 +277,10 @@ mod test {
     use yulong_tcp::TcpContext;
     use yulong_quic::QuicContext;
 
+    
     use async_std::{self};
     use yulong::log;
     use yulong_network::identity::Peer;
-    use std::net::SocketAddr;
 
     #[async_std::test]
     async fn bdn_1() {

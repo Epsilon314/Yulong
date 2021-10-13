@@ -3,7 +3,7 @@ syntax = "proto3";
 package bdn;
 
 message bdn_message {
-    uint32 msg_type = 1;
+    uint32 header = 1;
     
     bytes src_id = 2;
     bytes from_id = 3;
