@@ -103,11 +103,11 @@ pub struct NoneKey {}
 
 impl AsBytes for NoneKey {
     fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
-        unimplemented!()
+        unreachable!()
     }
 
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
-        unimplemented!()
+        unreachable!()
     }
 }
 
@@ -117,14 +117,14 @@ impl Signer for NoneSigner {
     type SIG = NoneKey;
 
     fn keygen(&self) -> (Self::PK, Self::SK) {
-        unimplemented!()
+        unreachable!()
     }
 
     fn sign(&self, msg: &[u8], sk: &Self::SK, pk: &Self::PK) -> Self::SIG {
-        unimplemented!()
+        unreachable!()
     }
 
     fn verify(&self, msg: &[u8], pk: &Self::PK, sig: &Self::SIG) -> bool {
-        unimplemented!()
+        unreachable!()
     }
 }

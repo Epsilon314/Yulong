@@ -2,6 +2,8 @@ use log::{info, warn, debug};
 use yulong_network::{identity::Peer, transport::Transport};
 use std::{collections::HashMap, marker::PhantomData};
 
+use crate::common::MessageWithIp;
+
 
 pub struct Route<T: Transport> {
 
@@ -108,7 +110,7 @@ impl<T: Transport> Route<T> {
 
 
     // todo: accept a route related command; apply some changes; and return reaction
-    pub fn handle_route_message() {
+    pub fn handle_route_message(msg: &MessageWithIp) {
         unimplemented!()
     }
 

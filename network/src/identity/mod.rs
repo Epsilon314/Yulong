@@ -78,8 +78,12 @@ impl Debug for Peer {
 
 impl Peer {
 
-    const ID_SIZE: usize = 32;
-
+    pub const ID_SIZE: usize = 32;
+    
+    pub const BROADCAST_ID: Peer = Peer{
+        raw_id: [0; Peer::ID_SIZE],
+        pubkey: PublicKey::NoKey
+    };
 
     pub fn get_id(&self) -> [u8; Peer::ID_SIZE] {
         self.raw_id
