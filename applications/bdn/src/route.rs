@@ -112,9 +112,12 @@ impl<T: Transport> Route<T> {
     // todo: accept a route related command; apply some changes; and return reaction
     pub fn handle_route_message(&mut self, msg: &OverlayMessage) -> Vec<(Peer, OverlayMessage)> {
 
+        // Pack all messages to be sent and return it to bdn
+        // BDN decides when & how to send them, do not assume the order of transmission
         let reply_list = Vec::<(Peer, OverlayMessage)>::new();
 
-        //todo
+        
+        
         reply_list
     }
 

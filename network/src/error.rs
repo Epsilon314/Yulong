@@ -38,7 +38,7 @@ impl DeserializeError {
 impl Error for DeserializeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         
-        // todo: how to turn self.boxed_error into &(dyn Error + 'static) ?
+        // Todo: how to turn self.boxed_error into &(dyn Error + 'static) ?
         // Sized is not satisfied 
 
         None

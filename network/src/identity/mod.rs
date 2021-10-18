@@ -50,6 +50,7 @@ pub struct Peer {
     pubkey: PublicKey
 }
 
+
 impl Hash for Peer {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.raw_id.hash(state);
@@ -79,11 +80,22 @@ impl Debug for Peer {
 impl Peer {
 
     pub const ID_SIZE: usize = 32;
-    
+
+    // define non-common ids
+    // see Peer::common
     pub const BROADCAST_ID: Peer = Peer{
         raw_id: [0; Peer::ID_SIZE],
         pubkey: PublicKey::NoKey
     };
+
+    
+    pub fn common(&self) -> bool {
+        if *self == Self::BROADCAST_ID {
+            return false;
+        }
+        true
+    }
+
 
     pub fn get_id(&self) -> [u8; Peer::ID_SIZE] {
         self.raw_id
@@ -156,4 +168,5 @@ impl Peer {
                 DumbError))
         }
     }
+
 }
