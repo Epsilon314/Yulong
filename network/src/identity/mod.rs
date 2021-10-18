@@ -5,7 +5,7 @@ use rand;
 use rand::Rng;
 use std::{fmt::{self,Display,Debug}, hash::Hash};
 
-use crate::{error::DumbError, error::TryfromSliceError};
+use crate::{error::{DumbError, TryfromSliceError}};
 use crypto::{PublicKey, PrivateKey, Signer, AsBytes, sm_signer::SmSigner};
 
 pub struct Me {

@@ -1,14 +1,26 @@
 use futures::{AsyncWriteExt};
+
 use yulong::utils::{
     bidirct_hashmap::BidirctHashmap,
 };
-use yulong_network::{identity::{Me, Peer, crypto::AsBytes}, transport::Transport};
-use std::{collections::HashMap, net::{
-        SocketAddr, IpAddr, Ipv4Addr,
-    }, sync::mpsc};
+
+use yulong_network::{
+    identity::Me,
+    identity::Peer, 
+    identity::crypto::AsBytes,
+    transport::Transport,
+};
+
+use std::{
+    collections::HashMap,
+    net::{SocketAddr, IpAddr, Ipv4Addr,},
+    sync::mpsc
+};
+
 use log::{warn, info, debug};
 use async_std::{io::BufReader};
-use crate::{message, route::Route};
+
+use crate::{message, msg_header::MsgTypeKind, route::Route};
 use crate::common::{SocketAddrBi, MessageWithIp};
 use crate::configs::{DEFAULT_BDN_PORT, MSG_MAXLEN};
 
@@ -239,12 +251,9 @@ impl<T: Transport> Iterator for BDN<T> {
         }
 
         // relay messages
-        // todo: add relay flag & more parameters (extra field or use the msg_type as bitmap?)
-
 
         // clone for modification
         let (from, mut incoming_msg) = msg.clone().unwrap();
-
 
         // todo: move to a relayer trait & impl it for each relay method
 
@@ -267,7 +276,34 @@ impl<T: Transport> Iterator for BDN<T> {
             }
 
         }
-        Some(msg.unwrap())
+
+        // dispatch messages
+        // payload_msg is returned to the caller
+        // error_msg is ignored
+
+        match incoming_msg.get_type() {
+            
+            Ok(MsgTypeKind::PAYLOAD_MSG) => {
+                Some(msg.unwrap())
+            }
+
+            Ok(MsgTypeKind::ROUTE_MSG) => {
+                //pass it to route module
+                let reply_list = self.route.handle_route_message(&incoming_msg);
+                None
+            }
+
+            Ok(MsgTypeKind::NET_MEASURE_MSG) => {
+                // Todo net measure 
+                None
+            }
+            
+            Err(error) => {
+                // cannot parse msg_type from msg header, skip this message
+                warn!("BDN::next bad msg_type {}", error);
+                None
+            }
+        }
     }
 }
 

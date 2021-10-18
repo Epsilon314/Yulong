@@ -175,7 +175,7 @@ impl FanOut {
     }
 
     pub fn set_fan_out(head: &mut u32, fanout: u32) -> Option<()> {
-        if fanout > (1 << (FANOUT_LEN + 1)) - 1 {
+        if fanout > (1 << FANOUT_LEN) - 1 {
             return None;
         }
         MsgHeader::set_header_field(head, fanout, 
@@ -196,7 +196,7 @@ impl TTL {
 
     
     pub fn set_ttl(head: &mut u32, ttl: u32) -> Option<()> {
-        if ttl > (1 << (TTL_LEN + 1)) - 1 {
+        if ttl > (1 << TTL_LEN) - 1 {
             return None;
         }
         MsgHeader::set_header_field(head, ttl,
