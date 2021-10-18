@@ -2,7 +2,7 @@ use log::{info, warn, debug};
 use yulong_network::{identity::Peer, transport::Transport};
 use std::{collections::HashMap, marker::PhantomData};
 
-use crate::common::MessageWithIp;
+use crate::{common::MessageWithIp, message::OverlayMessage};
 
 
 pub struct Route<T: Transport> {
@@ -110,8 +110,15 @@ impl<T: Transport> Route<T> {
 
 
     // todo: accept a route related command; apply some changes; and return reaction
-    pub fn handle_route_message(msg: &MessageWithIp) {
-        unimplemented!()
+    pub fn handle_route_message(&mut self, msg: &OverlayMessage) -> Vec<(Peer, OverlayMessage)> {
+
+        // Pack all messages to be sent and return it to bdn
+        // BDN decides when & how to send them, do not assume the order of transmission
+        let reply_list = Vec::<(Peer, OverlayMessage)>::new();
+
+        
+        
+        reply_list
     }
 
 }

@@ -1,14 +1,26 @@
 use futures::{AsyncWriteExt};
+
 use yulong::utils::{
     bidirct_hashmap::BidirctHashmap,
 };
-use yulong_network::{identity::{Me, Peer, crypto::AsBytes}, transport::Transport};
-use std::{collections::HashMap, net::{
-        SocketAddr, IpAddr, Ipv4Addr,
-    }, sync::mpsc};
+
+use yulong_network::{
+    identity::Me,
+    identity::Peer, 
+    identity::crypto::AsBytes,
+    transport::Transport,
+};
+
+use std::{
+    collections::HashMap,
+    net::{SocketAddr, IpAddr, Ipv4Addr,},
+    sync::mpsc
+};
+
 use log::{warn, info, debug};
 use async_std::{io::BufReader};
-use crate::{message, route::Route};
+
+use crate::{message, msg_header::MsgTypeKind, route::Route};
 use crate::common::{SocketAddrBi, MessageWithIp};
 use crate::configs::{DEFAULT_BDN_PORT, MSG_MAXLEN};
 
@@ -225,6 +237,10 @@ impl<T: Transport> BDN<T> {
     }
 }
 
+
+/// Loop polling BDN to activate it
+/// BDN will not actually process incoming messages but only store it until 
+/// you poll it.
 impl<T: Transport> Iterator for BDN<T> {
     type Item = MessageWithIp;
 
@@ -239,35 +255,88 @@ impl<T: Transport> Iterator for BDN<T> {
         }
 
         // relay messages
-        // todo: add relay flag & more parameters (extra field or use the msg_type as bitmap?)
-
 
         // clone for modification
-        let (from, mut incoming_msg) = msg.clone().unwrap();
+        let (from_addr, mut incoming_msg) = msg.clone().unwrap();
+        
+        let carried_idt = incoming_msg.from();
+        let mut from_idt: &Peer;
 
+        // do not carry an common peer id, use addr to get peer id
+        if !carried_idt.common() {
+            let stored_peer = self.address_book.get_by_value(&from_addr);
+            if stored_peer.is_none() {
+                // unknown from, return early
+            }
+            from_idt = &stored_peer.unwrap();
+        }
+        // contains from peer id, believe carried identity (todo: check sign aforehead)
+        else {
+            from_idt = &carried_idt;
+            // if carried peer is unknown, add it to address book
+            // else update it
+            let prev_addr = self.address_book.get_by_key(&carried_idt);
+            if prev_addr.is_none() {
+                self.address_book.insert(from_idt, &from_addr);
+            }
+            else {
+                if *prev_addr.unwrap() != from_addr {
+                    info!("BDN::next Peer {} moved from {} to {}", 
+                        from_idt, prev_addr.unwrap(), from_addr);
+                    self.address_book.update_by_key(from_idt, &from_addr);
+                }
+            }
+        }
 
         // todo: move to a relayer trait & impl it for each relay method
-
+        // handle relay messages in sequence
         if incoming_msg.is_relay() {
 
             let src = &incoming_msg.src();
             incoming_msg.set_from(&self.local_identity.peer);
-    
-            if let Some(peer) = self.address_book.get_by_value(&from) {
-                let relay_list = self.route.get_relay(src, peer);
-                for next_node in relay_list {
-    
-                    // send it in sequence
-                    async_std::task::block_on(
-                        self.send_to(&next_node, &incoming_msg));
-                }
+
+            let relay_list = self.route.get_relay(src, from_idt);
+            for next_node in relay_list {
+                
+                // send it in sequence
+                async_std::task::block_on(
+                    self.send_to(&next_node, &incoming_msg));
             }
-            else {
-                warn!("BDN::next unknown upstream node: {}", &from)
+        }
+
+        // dispatch messages
+        match incoming_msg.get_type() {
+            
+            // payload_msg is returned to the caller
+            Ok(MsgTypeKind::PAYLOAD_MSG) => {
+                Some(msg.unwrap())
             }
 
+            Ok(MsgTypeKind::ROUTE_MSG) => {
+
+                // pass it to route module
+                let reply_list = self.route.handle_route_message(&incoming_msg);
+                
+                // send replys immediately and in sequence
+                for (target, msg) in reply_list {
+                    async_std::task::block_on(
+                        self.send_to(&target, &msg));
+                }
+                
+                None
+            }
+
+            Ok(MsgTypeKind::NET_MEASURE_MSG) => {
+                // Todo net measure 
+                None
+            }
+            
+            Err(error) => {
+                // cannot parse msg_type from msg header, skip this message
+                warn!("BDN::next bad msg_type {}", error);
+                None
+            }
         }
-        Some(msg.unwrap())
     }
 }
 
@@ -299,8 +368,8 @@ mod test {
 
         println!("New BDN client at: {:?}", bdn.local_identity.peer.get_id());
         bdn.address_book.insert(
-            peer.clone(),
-            socket,
+            &peer,
+            &socket,
         );
 
         let payload = [42_u8; 1900];
@@ -342,8 +411,8 @@ mod test {
 
         println!("New BDN client at: {:?}", bdn.local_identity.peer.get_id());
         bdn.address_book.insert(
-            peer.clone(),
-            socket,
+            &peer,
+            &socket,
         );
 
         let payload = [42_u8; 1900];

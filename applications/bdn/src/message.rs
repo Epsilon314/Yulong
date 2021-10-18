@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::{convert::TryInto, mem::size_of};
 
 use log::warn;
@@ -7,6 +8,7 @@ use yulong_network::{
     error::DeserializeError,
     error::SerializeError,
     error::DumbError,
+    error::BadFieldError,
     transport::Transport,
 };
 
@@ -16,7 +18,7 @@ use async_std::io::BufReader;
 use futures::{AsyncReadExt};
 
 use crate::configs::MSG_MAXLEN;
-use crate::msg_header::{self, MsgTypeKind};
+use crate::msg_header;
 
 // message type: bdn control msg or payloads
 #[derive(Debug, Clone)]
@@ -83,13 +85,44 @@ impl OverlayMessage {
     
     // deal with message type bitmap
 
-    pub fn get_type(&self) -> Option<msg_header::MsgTypeKind> {
-        msg_header::MsgType::get_msg_type(self.header)
+    pub fn get_type(&self) -> Result<msg_header::MsgTypeKind, BadFieldError> {
+        match msg_header::MsgType::get_msg_type(self.header) {
+            Some(kind) => Ok(kind),
+            None => Err(BadFieldError::new(
+                format!("UnKnown msg_type field in {}", &self),
+                DumbError
+            )),
+        }
     }
 
     
     pub fn set_type(&mut self, msg_type: msg_header::MsgTypeKind) {
+        
+        // Since msg_type is of MsgTypeKind, set_msg_type should always work
+        // unless there exists some coding bug. Therefore we do not throw an error
+        // but let it panic.
         msg_header::MsgType::set_msg_type(&mut self.header, msg_type).unwrap();
+    }
+
+
+    pub fn get_relay_method(&self) -> Result<msg_header::RelayMethodKind, BadFieldError> {
+        match msg_header::RelayMethod::get_relay_method(self.header) {
+            Some(kind) => Ok(kind),
+            None => Err(BadFieldError::new(
+                format!("UnKnown relay_method field in {}", &self),
+                DumbError
+            )),
+        }
+    }
+
+
+    pub fn set_relay_method(&mut self, relay_method: msg_header::RelayMethodKind) {
+
+        // Since relay_method is of RelayMethodKind, set_relay_method should always work
+        // unless there exists some coding bug. Therefore we do not throw an error
+        // but let it panic.
+        msg_header::RelayMethod::set_relay_method(
+            &mut self.header, relay_method).unwrap();
     }
 
     
@@ -108,11 +141,14 @@ impl OverlayMessage {
     }
 
 
-    // todo: define an error for overflow
-    pub fn set_fanout(&mut self, fanout: u32) {
+    pub fn set_fanout(&mut self, fanout: u32) -> Result<(), BadFieldError>{
         if msg_header::FanOut::set_fan_out(&mut self.header, fanout).is_none() {
-            warn!("OverlayMessage::set_fanout fan out value: {} overflow", fanout);
+            warn!("OverlayMessage::set_fanout fan out value overflow: {}", fanout);
+            return Err(BadFieldError::new(
+                "OverlayMessage::set_fanout parameter fanout is too large.",
+                DumbError));
         }
+        Ok(())
     }
 
 
@@ -121,10 +157,14 @@ impl OverlayMessage {
     }
 
 
-    pub fn set_ttl(&mut self, ttl: u32) {
+    pub fn set_ttl(&mut self, ttl: u32) -> Result<(), BadFieldError> {
         if msg_header::TTL::set_ttl(&mut self.header, ttl).is_none() {
-            warn!("OverlayMessage::set_ttl ttl value: {} overflow", ttl);
+            warn!("OverlayMessage::set_ttl ttl value overflow: {}", ttl);
+            return Err(BadFieldError::new(
+                "OverlayMessage::set_ttl parameter ttl is too large.",
+                DumbError));
         }
+        Ok(())
     }
 
     
@@ -268,13 +308,25 @@ impl<T: Transport> MessageReader<T> {
 }
 
 
+impl Display for OverlayMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Overlay Message\n    header: {:032b}\n    src {}\
+        \n    from {}\n    dst {}\n    payload: {:02x?}\n", self.header,
+        self.src_id, self.from_id, self.dst_id, self.payload)
+    }
+}
+
+
 #[cfg(test)]
 mod test {
     
     use super::*;
+    use crate::msg_header::{MsgTypeKind, RelayMethodKind};
+    use yulong::log::setup_logger;
 
     #[test]
     fn message_serde() {
+        setup_logger("message").unwrap();
         let payload = [42_u8; 258];
 
         let peer1 = Peer::from_bytes(&[1]);
@@ -290,15 +342,16 @@ mod test {
         );
 
         let raw = msg.into_bytes().unwrap();
-        println!("raw message: {:?}", &raw);
+        // println!("raw message: {:?}", &raw);
 
         let rec_msg = OverlayMessage::from_bytes(&raw).unwrap();
         assert_eq!(msg.payload, rec_msg.payload);
     }
 
     #[test]
-    fn msg_type() {
-        let payload = [1_u8; 2];
+    fn msg_header1() {
+        setup_logger("message").unwrap();
+        let payload = [42_u8; 10];
         let peer = Peer::from_bytes(&[1]);
         let mut msg = OverlayMessage::new(
             0b00100000000000000000000000000000,
@@ -309,16 +362,48 @@ mod test {
         );
 
         msg.set_relay(false);
+        msg.set_relay_method(RelayMethodKind::LOOKUP_TABLE_1);
 
         assert!(matches!(msg.get_type().unwrap(), MsgTypeKind::NET_MEASURE_MSG));
+        assert!(matches!(msg.get_relay_method().unwrap(), RelayMethodKind::LOOKUP_TABLE_1));
 
         msg.set_type(MsgTypeKind::PAYLOAD_MSG);
 
         assert!(matches!(msg.get_type().unwrap(), MsgTypeKind::PAYLOAD_MSG));
         assert_eq!(msg.is_relay(), false);
+        msg.set_relay_method(RelayMethodKind::KAD);
         msg.set_relay(true);
+        
 
         assert_eq!(msg.is_relay(), true);
         assert!(matches!(msg.get_type().unwrap(), MsgTypeKind::PAYLOAD_MSG));
+        assert!(matches!(msg.get_relay_method().unwrap(), RelayMethodKind::KAD));
+    }
+
+
+    #[test]
+    fn msg_header2() {
+        setup_logger("message").unwrap();
+        let payload = [1_u8; 2];
+        let peer = Peer::from_bytes(&[1]);
+        let mut msg = OverlayMessage::new(
+            0b00100000000000000000000000000000,
+            &peer,
+            &peer,
+            &peer,
+            &payload
+        );
+
+        msg.set_fanout(10).unwrap();
+        msg.set_ttl(15).unwrap();
+
+        assert_eq!(msg.get_fanout(), 10);
+        assert_eq!(msg.get_ttl(), 15);
+
+        msg.set_relay(true);
+        msg.set_ttl(10).unwrap();
+
+        assert_eq!(msg.get_fanout(), 10);
+        assert_eq!(msg.get_ttl(), 10);
     }
 }
