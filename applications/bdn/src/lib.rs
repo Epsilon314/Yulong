@@ -4,6 +4,9 @@ extern crate num_derive;
 mod message;
 mod msg_header;
 mod route;
+
+mod route_inner;
+
 pub mod overlay;
 
 mod bdn_message {
