@@ -1,6 +1,7 @@
 use libsm::sm2;
-use crate::identity::crypto::{AsBytes, Signer};
-use crate::error::{DeserializeError, SerializeError, DumbError};
+use yulong::utils::AsBytes;
+use yulong::error::{DumbError, SerializeError, DeserializeError};
+use crate::identity::crypto::Signer;
 
 pub struct SmSigner {
     ctx: sm2::signature::SigCtx
@@ -53,7 +54,7 @@ impl AsBytes for SmSecKey {
         Ok(cx.serialize_seckey(&self.sk))
     }
 
-    fn from_bytes(buf: &[u8]) -> Result<Self, crate::error::DeserializeError> {
+    fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
         let cx = sm2::signature::SigCtx::new();
         match cx.load_seckey(buf) {
             Ok(key) => {

@@ -1,40 +1,120 @@
 use log::{info, warn, debug};
-use yulong_network::{identity::Peer, transport::Transport};
-use std::{collections::HashMap, marker::PhantomData};
+use num_traits::ToPrimitive;
+use yulong_network::{identity::Peer};
+use std::{collections::HashMap, fmt::Debug};
+use std::marker::PhantomData;
 
-use crate::{common::MessageWithIp, message::OverlayMessage};
+use crate::msg_header::{MsgType, MsgTypeKind};
+use crate::{
+    common::MessageWithIp,
+    message::OverlayMessage,
+    route_inner::RelayCtl,
+};
+
+/// Application-layer route user interface, query only
+pub trait AppLayerRouteUser {
+
+    type Host: Clone + Debug;
+
+    fn get_next_hop(&self, dst: &Self::Host) -> Option<Self::Host>;
+
+    fn get_relay(&self, src: &Self::Host, from: &Self::Host) -> Vec<Self::Host>;
+
+}
 
 
-pub struct Route<T: Transport> {
+/// Application-layer route manage interface, insert, delete and query
+pub trait AppLayerRouteInner: AppLayerRouteUser {
 
-    transport_type: PhantomData<T>,
+    fn insert_path(&mut self, dst: &Self::Host, next: &Self::Host);
+
+    fn remove_path(&mut self, dst: &Self::Host);
+
+    fn insert_relay(&mut self, src: &Self::Host, from: &Self::Host, to: &Self::Host);
+
+    fn remove_relay(&mut self, src: &Self::Host, from: &Self::Host, to: &Self::Host);
+
+}
+
+pub struct Route<R: RelayCtl> {
+
+    route_table: RouteTable,
+
+    relay_method_in_use: PhantomData<R>,
+}
+
+pub struct RouteTable {
 
     // (src, from) -> [next] 
     relay_table: HashMap<(Peer, Peer), Vec<Peer>>,
     
     // (dst, next)
-    route_table: HashMap<Peer, Peer>,
+    path_table: HashMap<Peer, Peer>,
 }
 
-
-impl<T: Transport> Route<T> {
-
+impl RouteTable {
     pub fn new() -> Self {
         Self {
-            transport_type: PhantomData::<T>,
-
             // store the relay network
             relay_table: HashMap::new(),
 
             // store route
-            route_table: HashMap::new(),
+            path_table: HashMap::new(),
+        }
+    }
+}
+
+impl<R: RelayCtl> Route<R> {
+
+    pub fn new() -> Self {
+        Self {
+            route_table: RouteTable::new(),
+
+            relay_method_in_use: PhantomData::<R>,
         }
     }
 
 
+    // todo: accept a route related command; apply some changes; and return reaction
+    pub fn handle_route_message(&mut self, msg: &OverlayMessage) -> Vec<OverlayMessage> {
+
+        // Pack all messages to be sent and return it to bdn
+        // BDN decides when & how to send them, do not assume the order of transmission
+        let mut reply_list = Vec::<OverlayMessage>::new();
+
+        let ctl_msgs = 
+            R::relay_ctl_callback(&mut self.route_table, &msg.from(), &msg.payload());
+        
+        for (peer, payload) in ctl_msgs {
+            let packed_message = OverlayMessage::new(
+                ToPrimitive::to_u32(&MsgTypeKind::ROUTE_MSG).unwrap(),
+                0,
+                
+                // to be filled by caller 
+                &Peer::BROADCAST_ID,
+
+                // to be filled by caller 
+                &Peer::BROADCAST_ID,
+                &peer,
+                &payload
+            );
+            reply_list.push(packed_message);
+        }
+
+        reply_list
+    }
+
+}
+
+
+impl AppLayerRouteUser for RouteTable {
+
+    type Host = Peer;
+
+
     /// Get next hop route to reach dst
-    pub fn get_next_hop(&self, dst: &Peer) -> Option<Peer> {
-        match self.route_table.get(dst) {
+    fn get_next_hop(&self, dst: &Self::Host) -> Option<Self::Host> {
+        match self.path_table.get(dst) {
             Some(next_hop) => Some(next_hop.to_owned()),
             None => None,
         }
@@ -42,16 +122,40 @@ impl<T: Transport> Route<T> {
 
 
     /// Get descendent peers to relay to
-    pub fn get_relay(&self, src: &Peer, from: &Peer) -> Vec<Peer> {
+    fn get_relay(&self, src: &Self::Host, from: &Self::Host) -> Vec<Self::Host> {
         match self.relay_table.get(&(src.to_owned(), from.to_owned())) {
             Some(next_hops) => next_hops.to_vec(),
             None => vec![],
-        } 
+        }
+    }
+
+}
+
+impl AppLayerRouteInner for RouteTable {
+    
+    fn insert_path(&mut self, dst: &Self::Host, next: &Self::Host) {
+        if let Some(handle) = self.path_table.get_mut(dst) {
+            warn!("Route::insert_route Overwrite the route to {}. Changed from {} to {}", dst, handle, next);
+            *handle = next.to_owned();
+        }
+        else {
+            self.path_table.insert(dst.to_owned(), next.to_owned());
+        }
+    }
+
+
+    fn remove_path(&mut self, dst: &Self::Host) {
+        if self.path_table.remove(dst).is_none() {
+            warn!("Route::remove_route Try to remove the route to {}, which do not exist.", dst);
+        }
+        else {
+            debug!("Route::remove_route Remove route to {}", dst);
+        }
     }
 
 
     /// Insert more descendent peer
-    pub fn insert_relay(&mut self, src: &Peer, from: &Peer, to: &Peer) {
+    fn insert_relay(&mut self, src: &Self::Host, from: &Self::Host, to: &Self::Host) {
         match self.relay_table.get_mut(&(src.to_owned(), from.to_owned())) {
             Some(handle) => {
                 if handle.contains(to) {
@@ -74,7 +178,7 @@ impl<T: Transport> Route<T> {
 
 
     /// Remove a descendent peer, fail silently
-    pub fn remove_relay(&mut self, src: &Peer, from: &Peer, to: &Peer) {
+    fn remove_relay(&mut self, src: &Self::Host, from: &Self::Host, to: &Self::Host) {
         match self.relay_table.get_mut(&(src.to_owned(), from.to_owned())) {
             Some(handle) => {
                 // remove all matching items
@@ -86,55 +190,51 @@ impl<T: Transport> Route<T> {
             }
         }
     }
+    
+}
 
+impl<R: RelayCtl> AppLayerRouteUser for Route<R> {
+    type Host = Peer;
 
-    pub fn insert_route(&mut self, dst: &Peer, next: &Peer) {
-        if let Some(handle) = self.route_table.get_mut(dst) {
-            warn!("Route::insert_route Overwrite the route to {}. Changed from {} to {}", dst, handle, next);
-            *handle = next.to_owned();
-        }
-        else {
-            self.route_table.insert(dst.to_owned(), next.to_owned());
-        }
+    fn get_next_hop(&self, dst: &Self::Host) -> Option<Self::Host> {
+        self.route_table.get_next_hop(dst)
     }
 
+    fn get_relay(&self, src: &Self::Host, from: &Self::Host) -> Vec<Self::Host> {
+        self.route_table.get_relay(src, from)
+    }
+}
 
-    pub fn remove_route(&mut self, dst: &Peer) {
-        if self.route_table.remove(dst).is_none() {
-            warn!("Route::remove_route Try to remove the route to {}, which do not exist.", dst);
-        }
-        else {
-            debug!("Route::remove_route Remove route to {}", dst);
-        }
+
+impl<R: RelayCtl> AppLayerRouteInner for Route<R> {
+    fn insert_path(&mut self, dst: &Self::Host, next: &Self::Host) {
+        self.route_table.insert_path(dst, next)
     }
 
-
-    // todo: accept a route related command; apply some changes; and return reaction
-    pub fn handle_route_message(&mut self, msg: &OverlayMessage) -> Vec<(Peer, OverlayMessage)> {
-
-        // Pack all messages to be sent and return it to bdn
-        // BDN decides when & how to send them, do not assume the order of transmission
-        let reply_list = Vec::<(Peer, OverlayMessage)>::new();
-
-        
-        
-        reply_list
+    fn remove_path(&mut self, dst: &Self::Host) {
+        self.route_table.remove_path(dst)
     }
 
+    fn insert_relay(&mut self, src: &Self::Host, from: &Self::Host, to: &Self::Host) {
+        self.route_table.insert_relay(src, from, to)
+    }
+
+    fn remove_relay(&mut self, src: &Self::Host, from: &Self::Host, to: &Self::Host) {
+        self.route_table.remove_relay(src, from, to)
+    }
 }
 
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use yulong_tcp::TcpContext;
-    use yulong::log;
+    use crate::route_inner::impls::mlbt::MlbtRelayCtlContext;
 
     #[test]
     fn insert_remove_relay() {
         // log::setup_logger("relay_test").unwrap();
 
-        let mut route = Route::<TcpContext>::new();
+        let mut route = Route::<MlbtRelayCtlContext>::new();
         let p1 = Peer::from_bytes(&[1]);
         let p2 = Peer::from_bytes(&[2]);
         let p3 = Peer::from_bytes(&[3]);
@@ -155,20 +255,20 @@ mod test {
     #[test]
     fn insert_remove_route() {
         // log::setup_logger("route_test").unwrap();
-        let mut route = Route::<TcpContext>::new();
+        let mut route = Route::<MlbtRelayCtlContext>::new();
         let p1 = Peer::from_bytes(&[1]);
         let p2 = Peer::from_bytes(&[2]);
         let p3 = Peer::from_bytes(&[3]);
         let p4 = Peer::from_bytes(&[4]);
-        route.insert_route(&p4, &p3);
-        route.insert_route(&p3, &p3);
-        route.insert_route(&p2, &p3);
-        route.insert_route(&p1, &p3);
+        route.insert_path(&p4, &p3);
+        route.insert_path(&p3, &p3);
+        route.insert_path(&p2, &p3);
+        route.insert_path(&p1, &p3);
 
         let next = route.get_next_hop(&p1);
         assert_eq!(next.unwrap(), p3);
 
-        route.remove_route(&p3);
+        route.remove_path(&p3);
         let next = route.get_next_hop(&p3);
         assert!(next.is_none());
     }

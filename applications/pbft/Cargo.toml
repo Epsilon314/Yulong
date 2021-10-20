@@ -9,6 +9,8 @@ edition = "2018"
 [dependencies]
 prost = "0.7"
 prost-types = "0.7.0"
+
+yulong = {path = "../../"}
 yulong_network = {path = "../../network"}
 yulong_tcp = {path = "../../transport/tcp"}
 

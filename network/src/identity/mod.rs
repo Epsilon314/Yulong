@@ -5,8 +5,11 @@ use rand;
 use rand::Rng;
 use std::{fmt::{self,Display,Debug}, hash::Hash};
 
-use crate::{error::{DumbError, TryfromSliceError}};
-use crypto::{PublicKey, PrivateKey, Signer, AsBytes, sm_signer::SmSigner};
+use yulong::utils::AsBytes;
+use yulong::error::DumbError;
+
+use crate::error::TryfromSliceError;
+use crypto::{PublicKey, PrivateKey, Signer, sm_signer::SmSigner};
 
 pub struct Me {
     pub peer: Peer,

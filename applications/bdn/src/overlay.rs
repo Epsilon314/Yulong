@@ -2,29 +2,33 @@ use futures::{AsyncWriteExt};
 
 use yulong::utils::{
     bidirct_hashmap::BidirctHashmap,
+    AsBytes,
 };
+
 
 use yulong_network::{
     identity::Me,
     identity::Peer, 
-    identity::crypto::AsBytes,
     transport::Transport,
 };
 
 use std::{
     collections::HashMap,
     net::{SocketAddr, IpAddr, Ipv4Addr,},
-    sync::mpsc
+    sync::mpsc,
+    time::SystemTime,
 };
 
 use log::{warn, info, debug};
 use async_std::{io::BufReader};
 
-use crate::{message, msg_header::MsgTypeKind, route::Route};
+use crate::{message, msg_header::MsgTypeKind, route::Route, route::AppLayerRouteUser};
 use crate::common::{SocketAddrBi, MessageWithIp};
 use crate::configs::{DEFAULT_BDN_PORT, MSG_MAXLEN};
 
-pub struct BDN<T: Transport> {
+use crate::route_inner::RelayCtl;
+
+pub struct BDN<T: Transport, R: RelayCtl> {
 
     local_identity: Me,
 
@@ -37,11 +41,11 @@ pub struct BDN<T: Transport> {
     msg_sender: mpsc::Sender<MessageWithIp>,
     msg_receiver: mpsc::Receiver<MessageWithIp>,
 
-    route: Route<T>,
+    route: Route<R>,
 }
 
 
-impl<T: Transport> BDN<T> {
+impl<T: Transport, R: RelayCtl> BDN<T, R> {
     
     pub fn new() -> Self {
 
@@ -121,7 +125,10 @@ impl<T: Transport> BDN<T> {
     }
 
 
-    pub async fn send_to(&mut self, dst: &Peer, msg: &message::OverlayMessage) {
+    pub async fn send_to(&mut self, dst: &Peer, msg: &mut message::OverlayMessage) {
+
+        // allow fail
+        msg.set_timestamp_now();
 
         let msg_bytes = msg.into_bytes();
 
@@ -169,7 +176,7 @@ impl<T: Transport> BDN<T> {
     }
 
 
-    pub async fn broadcast(&mut self, src: &Peer, msg: &message::OverlayMessage) {
+    pub async fn broadcast(&mut self, src: &Peer, msg: &mut message::OverlayMessage) {
 
         let relay_list = self.route.get_relay(&src, &self.local_identity.peer);
 
@@ -241,7 +248,7 @@ impl<T: Transport> BDN<T> {
 /// Loop polling BDN to activate it
 /// BDN will not actually process incoming messages but only store it until 
 /// you poll it.
-impl<T: Transport> Iterator for BDN<T> {
+impl<T: Transport, R: RelayCtl> Iterator for BDN<T, R> {
     type Item = MessageWithIp;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -260,7 +267,7 @@ impl<T: Transport> Iterator for BDN<T> {
         let (from_addr, mut incoming_msg) = msg.clone().unwrap();
         
         let carried_idt = incoming_msg.from();
-        let mut from_idt: &Peer;
+        let from_idt: &Peer;
 
         // do not carry an common peer id, use addr to get peer id
         if !carried_idt.common() {
@@ -300,7 +307,7 @@ impl<T: Transport> Iterator for BDN<T> {
                 
                 // send it in sequence
                 async_std::task::block_on(
-                    self.send_to(&next_node, &incoming_msg));
+                    self.send_to(&next_node, &mut incoming_msg));
             }
         }
 
@@ -317,10 +324,14 @@ impl<T: Transport> Iterator for BDN<T> {
                 // pass it to route module
                 let reply_list = self.route.handle_route_message(&incoming_msg);
                 
-                // send replys immediately and in sequence
-                for (target, msg) in reply_list {
+                // send reply immediately and in sequence
+                for mut msg in reply_list {
+
+                    msg.set_src(&self.local_identity.peer);
+                    msg.set_from(&self.local_identity.peer);
+
                     async_std::task::block_on(
-                        self.send_to(&target, &msg));
+                        self.send_to(&msg.dst(), &mut msg));
                 }
                 
                 None
@@ -350,7 +361,7 @@ mod test {
     use super::BDN;
     use yulong_tcp::TcpContext;
     use yulong_quic::QuicContext;
-
+    use crate::route_inner::impls::mlbt::MlbtRelayCtlContext;
     
     use async_std::{self};
     use yulong::log;
@@ -361,7 +372,7 @@ mod test {
 
         log::setup_logger("bdn_test1").unwrap();
         
-        let mut bdn = BDN::<QuicContext>::new();
+        let mut bdn = BDN::<QuicContext, MlbtRelayCtlContext>::new();
 
         let peer = Peer::from_random();
         let socket = SocketAddrBi::new(IpAddr::from_str("127.0.0.1").unwrap(), 9002_u16, None);
@@ -375,20 +386,20 @@ mod test {
         let payload = [42_u8; 1900];
         
         let server = async_std::task::spawn(
-            BDN::<QuicContext>::listen(9001, bdn.msg_sender.clone())
+            BDN::<QuicContext, MlbtRelayCtlContext>::listen(9001, bdn.msg_sender.clone())
         );
 
         let mut m1 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &[1,2,3]);
+            0,0, &peer, &peer, &peer, &[1,2,3]);
 
         let mut m2 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &[1,2,3,4,5,6]);
+            0,0, &peer, &peer, &peer, &[1,2,3,4,5,6]);
 
         let mut m3 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &payload);
+            0, 0, &peer, &peer, &peer, &payload);
 
         let mut m4 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &[1,2,3]);
+            0, 0, &peer, &peer, &peer, &[1,2,3]);
 
         bdn.connect().await;
         bdn.send_to(&peer, &mut m1).await;
@@ -396,7 +407,7 @@ mod test {
         bdn.send_to(&peer, &mut m3).await;
         bdn.send_to(&peer, &mut m4).await;
 
-        server.await;
+        server.await;    // run forever
     }
 
     #[async_std::test]
@@ -404,7 +415,7 @@ mod test {
 
         log::setup_logger("bdn_test2").unwrap();
         
-        let mut bdn = BDN::<QuicContext>::new();
+        let mut bdn = BDN::<QuicContext, MlbtRelayCtlContext>::new();
 
         let peer = Peer::from_random();
         let socket = SocketAddrBi::new(IpAddr::from_str("127.0.0.1").unwrap(), 9001_u16, None);
@@ -418,20 +429,20 @@ mod test {
         let payload = [42_u8; 1900];
         
         let server = async_std::task::spawn(
-            BDN::<QuicContext>::listen(9002, bdn.msg_sender.clone())
+            BDN::<QuicContext, MlbtRelayCtlContext>::listen(9002, bdn.msg_sender.clone())
         );
         
         let mut m1 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &[1,2,3]);
+            0, 0, &peer, &peer, &peer, &[1,2,3]);
 
         let mut m2 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &[1,2,3,4,5,6]);
+            0, 0, &peer, &peer, &peer, &[1,2,3,4,5,6]);
 
         let mut m3 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &payload);
+            0, 0, &peer, &peer, &peer, &payload);
 
         let mut m4 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &[1,2,3]);
+            0, 0, &peer, &peer, &peer, &[1,2,3]);
 
         bdn.connect().await;
         bdn.send_to(&peer, &mut m1).await;
@@ -439,7 +450,7 @@ mod test {
         bdn.send_to(&peer, &mut m3).await;
         bdn.send_to(&peer, &mut m4).await;
 
-        server.await;
+        server.await;   // run forever
     }
 
 }

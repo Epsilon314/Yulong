@@ -1,15 +1,14 @@
 #![allow(unused_variables)]
 pub mod sm_signer;
 
-use crate::error::{DeserializeError, SerializeError, DumbError};
+use yulong::error::{DeserializeError, SerializeError, DumbError};
+use yulong::utils::AsBytes;
+
 use sm_signer::{SmPubKey, SmSecKey};
 use crate::peer_id;
 use prost::Message;
 
-pub trait AsBytes: Sized {
-    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError>;
-    fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError>;
-}
+
 
 pub trait Signer: 'static + Send {
 

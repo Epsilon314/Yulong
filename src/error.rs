@@ -2,15 +2,30 @@ use std::error::Error;
 use std::fmt::{self, Debug, Display};
 
 
-/// Errors happened in Transport trait
+// dumb error
+// no concrete meaning or usage, just the result of fighting the complier :(
+
 #[derive(Debug)]
-pub struct TransportError {
+pub struct DumbError;
+impl Display for DumbError {
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        unreachable!("dumb error")
+    }
+}
+
+
+impl Error for DumbError {}
+
+
+
+#[derive(Debug)]
+pub struct DeserializeError {
     describe: String,
     boxed_error: Box<dyn Error>
 }
 
 
-impl TransportError {
+impl DeserializeError {
     pub fn new<S: ToString>(des: S, err: impl Error + 'static) -> Self {
         Self {
             describe: des.to_string(),
@@ -20,29 +35,33 @@ impl TransportError {
 }
 
 
-impl Error for TransportError {
+impl Error for DeserializeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
+        
+        // Todo: how to turn self.boxed_error into &(dyn Error + 'static) ?
+        // Sized is not satisfied 
+
         None
     }
 }
 
 
-impl Display for TransportError {
+impl Display for DeserializeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Transport error: {}", self.describe)
+        write!(f, "Deserialize error: {}", self.describe)
     }
 }
 
 
-/// Errors happens dealing with identity
+
 #[derive(Debug)]
-pub struct TryfromSliceError {
+pub struct SerializeError {
     describe: String,
     boxed_error: Box<dyn Error>
 }
 
 
-impl TryfromSliceError {
+impl SerializeError {
     pub fn new<S: ToString>(des: S, err: impl Error + 'static) -> Self {
         Self {
             describe: des.to_string(),
@@ -52,15 +71,15 @@ impl TryfromSliceError {
 }
 
 
-impl Error for TryfromSliceError {
+impl Error for SerializeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         None
     }
 }
 
 
-impl Display for TryfromSliceError {
+impl Display for SerializeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TryfromSliceError error: {}", self.describe)
+        write!(f, "Serialize error: {}", self.describe)
     }
 }

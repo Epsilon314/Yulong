@@ -1,9 +1,13 @@
 #[macro_use]
 extern crate num_derive;
 
+pub mod error;
 mod message;
 mod msg_header;
 mod route;
+
+mod route_inner;
+
 pub mod overlay;
 
 mod bdn_message {
