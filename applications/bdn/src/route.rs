@@ -88,6 +88,7 @@ impl<R: RelayCtl> Route<R> {
         for (peer, payload) in ctl_msgs {
             let packed_message = OverlayMessage::new(
                 ToPrimitive::to_u32(&MsgTypeKind::ROUTE_MSG).unwrap(),
+                0,
                 
                 // to be filled by caller 
                 &Peer::BROADCAST_ID,

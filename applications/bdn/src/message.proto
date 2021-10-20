@@ -4,10 +4,18 @@ package bdn;
 
 message bdn_message {
     uint32 header = 1;
+    uint64 timestamp = 2;
     
-    bytes src_id = 2;
-    bytes from_id = 3;
-    bytes dst_id = 4;
+    bytes src_id = 3;
+    bytes from_id = 4;
+    bytes dst_id = 5;
 
-    bytes payload = 5;
+    bytes payload = 6;
+}
+
+message mlbt_message {
+    uint32 message_type = 1;
+    uint64 message_id = 2;
+
+    bytes payload = 3;
 }

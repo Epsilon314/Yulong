@@ -2,19 +2,21 @@ use futures::{AsyncWriteExt};
 
 use yulong::utils::{
     bidirct_hashmap::BidirctHashmap,
+    AsBytes,
 };
+
 
 use yulong_network::{
     identity::Me,
     identity::Peer, 
-    identity::crypto::AsBytes,
     transport::Transport,
 };
 
 use std::{
     collections::HashMap,
     net::{SocketAddr, IpAddr, Ipv4Addr,},
-    sync::mpsc
+    sync::mpsc,
+    time::SystemTime,
 };
 
 use log::{warn, info, debug};
@@ -123,7 +125,10 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
     }
 
 
-    pub async fn send_to(&mut self, dst: &Peer, msg: &message::OverlayMessage) {
+    pub async fn send_to(&mut self, dst: &Peer, msg: &mut message::OverlayMessage) {
+
+        // allow fail
+        msg.set_timestamp_now();
 
         let msg_bytes = msg.into_bytes();
 
@@ -171,7 +176,7 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
     }
 
 
-    pub async fn broadcast(&mut self, src: &Peer, msg: &message::OverlayMessage) {
+    pub async fn broadcast(&mut self, src: &Peer, msg: &mut message::OverlayMessage) {
 
         let relay_list = self.route.get_relay(&src, &self.local_identity.peer);
 
@@ -302,7 +307,7 @@ impl<T: Transport, R: RelayCtl> Iterator for BDN<T, R> {
                 
                 // send it in sequence
                 async_std::task::block_on(
-                    self.send_to(&next_node, &incoming_msg));
+                    self.send_to(&next_node, &mut incoming_msg));
             }
         }
 
@@ -319,10 +324,14 @@ impl<T: Transport, R: RelayCtl> Iterator for BDN<T, R> {
                 // pass it to route module
                 let reply_list = self.route.handle_route_message(&incoming_msg);
                 
-                // send replys immediately and in sequence
-                for msg in reply_list {
+                // send reply immediately and in sequence
+                for mut msg in reply_list {
+
+                    msg.set_src(&self.local_identity.peer);
+                    msg.set_from(&self.local_identity.peer);
+
                     async_std::task::block_on(
-                        self.send_to(&msg.dst(), &msg));
+                        self.send_to(&msg.dst(), &mut msg));
                 }
                 
                 None
@@ -381,16 +390,16 @@ mod test {
         );
 
         let mut m1 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &[1,2,3]);
+            0,0, &peer, &peer, &peer, &[1,2,3]);
 
         let mut m2 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &[1,2,3,4,5,6]);
+            0,0, &peer, &peer, &peer, &[1,2,3,4,5,6]);
 
         let mut m3 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &payload);
+            0, 0, &peer, &peer, &peer, &payload);
 
         let mut m4 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &[1,2,3]);
+            0, 0, &peer, &peer, &peer, &[1,2,3]);
 
         bdn.connect().await;
         bdn.send_to(&peer, &mut m1).await;
@@ -424,16 +433,16 @@ mod test {
         );
         
         let mut m1 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &[1,2,3]);
+            0, 0, &peer, &peer, &peer, &[1,2,3]);
 
         let mut m2 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &[1,2,3,4,5,6]);
+            0, 0, &peer, &peer, &peer, &[1,2,3,4,5,6]);
 
         let mut m3 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &payload);
+            0, 0, &peer, &peer, &peer, &payload);
 
         let mut m4 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &[1,2,3]);
+            0, 0, &peer, &peer, &peer, &[1,2,3]);
 
         bdn.connect().await;
         bdn.send_to(&peer, &mut m1).await;

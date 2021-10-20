@@ -4,7 +4,7 @@ use futures::ready;
 use futures::StreamExt;
 use futures::{AsyncRead, AsyncWrite};
 use quinn::{RecvStream, SendStream};
-use yulong_network::error::DumbError;
+use yulong::error::DumbError;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};

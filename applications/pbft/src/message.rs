@@ -1,13 +1,10 @@
 use prost::Message;
-use yulong_network::{
-    error::DeserializeError,
-    error::SerializeError,
-    identity::{Peer,
-        crypto::{
-            AsBytes,
-        },
-    }
-};
+
+use yulong::error::{DeserializeError, SerializeError};
+use yulong::utils::AsBytes;
+
+use yulong_network::identity::Peer;
+
 use crate::pbft_message::ProtoPbftMessage;
 
 pub struct PbftMessage {
@@ -63,9 +60,10 @@ impl PbftMessage {
 #[cfg(test)]
 mod test {
 
+    use yulong::utils::AsBytes;
+
     use yulong_network::identity::{
         crypto::{
-            AsBytes,
             Signer,
             sm_signer::SmSigner,
             PublicKey,
