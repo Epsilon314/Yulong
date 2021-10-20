@@ -53,6 +53,9 @@ pub struct RouteTable {
 }
 
 impl RouteTable {
+
+    pub const MAX_LINK: u32 = 128;
+
     pub fn new() -> Self {
         Self {
             // store the relay network
