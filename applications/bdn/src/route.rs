@@ -1,6 +1,8 @@
 use log::{info, warn, debug};
 use num_traits::ToPrimitive;
+use yulong::utils::bidirct_hashmap::BidirctHashmap;
 use yulong_network::{identity::Peer};
+use std::hash::Hash;
 use std::{collections::HashMap, fmt::Debug};
 use std::marker::PhantomData;
 
@@ -16,9 +18,11 @@ pub trait AppLayerRouteUser {
 
     type Host: Clone + Debug;
 
+    fn get_delegate(&self, src: &Self::Host) -> Option<Self::Host>;
+
     fn get_next_hop(&self, dst: &Self::Host) -> Option<Self::Host>;
 
-    fn get_relay(&self, src: &Self::Host, from: &Self::Host) -> Vec<Self::Host>;
+    fn get_relay(&self, src: &Self::Host) -> Vec<Self::Host>;
 
 }
 
@@ -30,9 +34,15 @@ pub trait AppLayerRouteInner: AppLayerRouteUser {
 
     fn remove_path(&mut self, dst: &Self::Host);
 
-    fn insert_relay(&mut self, src: &Self::Host, from: &Self::Host, to: &Self::Host);
+    fn reg_delegate(&mut self, src: &Self::Host, del: &Self::Host);
 
-    fn remove_relay(&mut self, src: &Self::Host, from: &Self::Host, to: &Self::Host);
+    fn insert_relay(&mut self, src: &Self::Host, to: &Self::Host);
+
+    fn remove_relay(&mut self, src: &Self::Host, to: &Self::Host);
+
+    fn get_relay_count(&self) -> u32;
+
+    fn get_relay_count_by_tree(&self, src: &Self::Host) -> u32;
 
 }
 
@@ -45,24 +55,37 @@ pub struct Route<R: RelayCtl> {
 
 pub struct RouteTable {
 
-    // (src, from) -> [next] 
-    relay_table: HashMap<(Peer, Peer), Vec<Peer>>,
+    delegates: BidirctHashmap<Peer, Peer>,
+
+    // src -> [next] 
+    relay_table: HashMap<Peer, Vec<Peer>>,
     
-    // (dst, next)
+    // dst -> next
     path_table: HashMap<Peer, Peer>,
+
+    relay_counter: u32,
+    relay_ct_per_tree: HashMap<Peer, u32>,
 }
 
 impl RouteTable {
 
     pub const MAX_LINK: u32 = 128;
 
+    const DEL_NUM: u32 = 1;
+
     pub fn new() -> Self {
         Self {
+
+            delegates: BidirctHashmap::new(),
+
             // store the relay network
             relay_table: HashMap::new(),
 
             // store route
             path_table: HashMap::new(),
+            
+            relay_counter: 0,
+            relay_ct_per_tree: HashMap::new(),
         }
     }
 }
@@ -91,8 +114,7 @@ impl<R: RelayCtl> Route<R> {
         for (peer, payload) in ctl_msgs {
             let packed_message = OverlayMessage::new(
                 ToPrimitive::to_u32(&MsgTypeKind::ROUTE_MSG).unwrap(),
-                0,
-                
+               
                 // to be filled by caller 
                 &Peer::BROADCAST_ID,
 
@@ -125,11 +147,15 @@ impl AppLayerRouteUser for RouteTable {
 
 
     /// Get descendent peers to relay to
-    fn get_relay(&self, src: &Self::Host, from: &Self::Host) -> Vec<Self::Host> {
-        match self.relay_table.get(&(src.to_owned(), from.to_owned())) {
+    fn get_relay(&self, src: &Self::Host) -> Vec<Self::Host> {
+        match self.relay_table.get(src) {
             Some(next_hops) => next_hops.to_vec(),
             None => vec![],
         }
+    }
+
+    fn get_delegate(&self, src: &Self::Host) -> Option<Self::Host> {
+        self.delegates.get_by_key(src).map(|p| p.to_owned())
     }
 
 }
@@ -158,11 +184,15 @@ impl AppLayerRouteInner for RouteTable {
 
 
     /// Insert more descendent peer
-    fn insert_relay(&mut self, src: &Self::Host, from: &Self::Host, to: &Self::Host) {
-        match self.relay_table.get_mut(&(src.to_owned(), from.to_owned())) {
+    fn insert_relay(&mut self, src: &Self::Host, to: &Self::Host) {
+        
+        self.relay_counter += 1;
+
+        match self.relay_table.get_mut(src) {
             Some(handle) => {
                 if handle.contains(to) {
-                    warn!("Route::insert_relay already exists: ({}, {}) -> {} ", src, from, to);
+                    warn!("Route::insert_relay already exists: {} -> {} ", src, to);
+                    self.relay_counter -= 1;
                     return;
                 }
                 else {
@@ -171,26 +201,72 @@ impl AppLayerRouteInner for RouteTable {
             }
             None => {
                 self.relay_table.insert(
-                    (src.to_owned(), from.to_owned()), 
+                    src.to_owned(), 
                     vec![to.to_owned()]
                 );
             }
         }
-        debug!("Route::insert_relay ({}, {}) -> {}", src, from, to);
+
+
+        // todo: fix counter
+        match self.relay_ct_per_tree.get_mut(src) {
+            Some(ct_handle) => {
+                *ct_handle += 1;
+            }
+            None => {
+                self.relay_ct_per_tree.insert(src.to_owned(), 1);
+            }
+        }
+
+        debug!("Route::insert_relay {} -> {}", src, to);
     }
 
 
     /// Remove a descendent peer, fail silently
-    fn remove_relay(&mut self, src: &Self::Host, from: &Self::Host, to: &Self::Host) {
-        match self.relay_table.get_mut(&(src.to_owned(), from.to_owned())) {
+    fn remove_relay(&mut self, src: &Self::Host, to: &Self::Host) {
+        match self.relay_table.get_mut(src) {
             Some(handle) => {
                 // remove all matching items
                 handle.retain(|x| x != to);
-                debug!("Route::remove_relay ({}, {}) -> {}", src, from, to);
+                debug!("Route::remove_relay {} -> {}", src, to);
             }
             None => {
-                warn!("Route::remove_relay ({}, {}) -> {}, no matching key", src, from, to);
+                warn!("Route::remove_relay {} -> {}, no matching key", src, to);
             }
+        }
+
+        self.relay_counter -= 1;
+
+        match self.relay_ct_per_tree.get_mut(src) {
+            Some(ct_handle ) => {
+                if *ct_handle == 0 {
+                    warn!("Route::remove_relay total link counter is inconsistent");
+                }
+                else {
+                    *ct_handle -= 1;
+                }
+            }
+            None => {
+                warn!("Route::remove_relay link counter for {} not found", src);
+            }
+        }
+    }
+
+    fn get_relay_count(&self) -> u32 {
+        self.relay_counter
+    }
+
+    fn get_relay_count_by_tree(&self, src: &Self::Host) -> u32 {
+        *self.relay_ct_per_tree.get(src).unwrap_or(&0)
+    }
+
+    fn reg_delegate(&mut self, src: &Self::Host, del: &Self::Host) {
+        if let Some(d) = self.delegates.get_by_key(src) {
+            warn!("Route::reg_delegate register delegate conflict")
+        }
+        else {
+            self.delegates.insert(src, del);
+            debug!("Route::reg_delegate register new delegate {} for {}", del, src);
         }
     }
     
@@ -203,8 +279,12 @@ impl<R: RelayCtl> AppLayerRouteUser for Route<R> {
         self.route_table.get_next_hop(dst)
     }
 
-    fn get_relay(&self, src: &Self::Host, from: &Self::Host) -> Vec<Self::Host> {
-        self.route_table.get_relay(src, from)
+    fn get_relay(&self, src: &Self::Host) -> Vec<Self::Host> {
+        self.route_table.get_relay(src)
+    }
+
+    fn get_delegate(&self, src: &Self::Host) -> Option<Self::Host> {
+        self.route_table.get_delegate(src)
     }
 }
 
@@ -218,12 +298,24 @@ impl<R: RelayCtl> AppLayerRouteInner for Route<R> {
         self.route_table.remove_path(dst)
     }
 
-    fn insert_relay(&mut self, src: &Self::Host, from: &Self::Host, to: &Self::Host) {
-        self.route_table.insert_relay(src, from, to)
+    fn insert_relay(&mut self, src: &Self::Host, to: &Self::Host) {
+        self.route_table.insert_relay(src, to)
     }
 
-    fn remove_relay(&mut self, src: &Self::Host, from: &Self::Host, to: &Self::Host) {
-        self.route_table.remove_relay(src, from, to)
+    fn remove_relay(&mut self, src: &Self::Host, to: &Self::Host) {
+        self.route_table.remove_relay(src, to)
+    }
+
+    fn get_relay_count(&self) -> u32 {
+        self.route_table.get_relay_count()
+    }
+
+    fn get_relay_count_by_tree(&self, src: &Self::Host) -> u32 {
+        self.route_table.get_relay_count_by_tree(src)
+    }
+
+    fn reg_delegate(&mut self, src: &Self::Host, del: &Self::Host) {
+        self.route_table.reg_delegate(src, del)
     }
 }
 
@@ -232,32 +324,33 @@ impl<R: RelayCtl> AppLayerRouteInner for Route<R> {
 mod test {
     use super::*;
     use crate::route_inner::impls::mlbt::MlbtRelayCtlContext;
+    use yulong::log;
 
     #[test]
     fn insert_remove_relay() {
-        // log::setup_logger("relay_test").unwrap();
+        log::setup_logger("relay_test").unwrap();
 
         let mut route = Route::<MlbtRelayCtlContext>::new();
         let p1 = Peer::from_bytes(&[1]);
         let p2 = Peer::from_bytes(&[2]);
         let p3 = Peer::from_bytes(&[3]);
         let p4 = Peer::from_bytes(&[4]);
-        route.insert_relay(&p1, &p2, &p3);
-        route.insert_relay(&p1, &p2, &p4);
+        route.insert_relay(&p1, &p3);
+        route.insert_relay(&p1, &p4);
         
-        let rl1 = route.get_relay(&p1, &p2);
+        let rl1 = route.get_relay(&p1);
         assert_eq!(rl1, vec![p3.clone(), p4.clone()]);
         
-        route.remove_relay(&p1, &p2, &p3);
-        route.remove_relay(&p1, &p2, &p3);
-        let rl1 = route.get_relay(&p1, &p2);
+        route.remove_relay(&p1, &p3);
+        route.remove_relay(&p1, &p3);
+        let rl1 = route.get_relay(&p1);
         assert_eq!(rl1, vec![p4.clone()]);
     }
 
 
     #[test]
     fn insert_remove_route() {
-        // log::setup_logger("route_test").unwrap();
+        log::setup_logger("route_test").unwrap();
         let mut route = Route::<MlbtRelayCtlContext>::new();
         let p1 = Peer::from_bytes(&[1]);
         let p2 = Peer::from_bytes(&[2]);

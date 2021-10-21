@@ -16,7 +16,6 @@ use std::{
     collections::HashMap,
     net::{SocketAddr, IpAddr, Ipv4Addr,},
     sync::mpsc,
-    time::SystemTime,
 };
 
 use log::{warn, info, debug};
@@ -178,7 +177,7 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
 
     pub async fn broadcast(&mut self, src: &Peer, msg: &mut message::OverlayMessage) {
 
-        let relay_list = self.route.get_relay(&src, &self.local_identity.peer);
+        let relay_list = self.route.get_relay(&src);
 
         for peer in relay_list {
             self.send_to(&peer, msg).await
@@ -302,7 +301,7 @@ impl<T: Transport, R: RelayCtl> Iterator for BDN<T, R> {
             let src = &incoming_msg.src();
             incoming_msg.set_from(&self.local_identity.peer);
 
-            let relay_list = self.route.get_relay(src, from_idt);
+            let relay_list = self.route.get_relay(src);
             for next_node in relay_list {
                 
                 // send it in sequence
@@ -390,16 +389,16 @@ mod test {
         );
 
         let mut m1 = message::OverlayMessage::new(
-            0,0, &peer, &peer, &peer, &[1,2,3]);
+            0, &peer, &peer, &peer, &[1,2,3]);
 
         let mut m2 = message::OverlayMessage::new(
-            0,0, &peer, &peer, &peer, &[1,2,3,4,5,6]);
+            0, &peer, &peer, &peer, &[1,2,3,4,5,6]);
 
         let mut m3 = message::OverlayMessage::new(
-            0, 0, &peer, &peer, &peer, &payload);
+            0,  &peer, &peer, &peer, &payload);
 
         let mut m4 = message::OverlayMessage::new(
-            0, 0, &peer, &peer, &peer, &[1,2,3]);
+            0,  &peer, &peer, &peer, &[1,2,3]);
 
         bdn.connect().await;
         bdn.send_to(&peer, &mut m1).await;
@@ -433,16 +432,16 @@ mod test {
         );
         
         let mut m1 = message::OverlayMessage::new(
-            0, 0, &peer, &peer, &peer, &[1,2,3]);
+            0,  &peer, &peer, &peer, &[1,2,3]);
 
         let mut m2 = message::OverlayMessage::new(
-            0, 0, &peer, &peer, &peer, &[1,2,3,4,5,6]);
+            0,  &peer, &peer, &peer, &[1,2,3,4,5,6]);
 
         let mut m3 = message::OverlayMessage::new(
-            0, 0, &peer, &peer, &peer, &payload);
+            0,  &peer, &peer, &peer, &payload);
 
         let mut m4 = message::OverlayMessage::new(
-            0, 0, &peer, &peer, &peer, &[1,2,3]);
+            0,  &peer, &peer, &peer, &[1,2,3]);
 
         bdn.connect().await;
         bdn.send_to(&peer, &mut m1).await;

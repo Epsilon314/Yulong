@@ -45,7 +45,6 @@ impl OverlayMessage {
 
     pub fn new(
         msg_type: u32,
-        timestamp: u64,
         src_id: &Peer, 
         from_id: &Peer,
         dst_id: &Peer,
@@ -53,7 +52,8 @@ impl OverlayMessage {
     ) -> Self {
         Self {
             header: msg_type,
-            timestamp,
+            // timestamp is filled just be send
+            timestamp: 0,
             src_id: src_id.to_owned(),
             from_id: from_id.to_owned(),
             dst_id: dst_id.to_owned(),
@@ -360,7 +360,6 @@ mod test {
     use crate::msg_header::{MsgTypeKind, RelayMethodKind};
     use log::debug;
     use yulong::log::setup_logger;
-    use std::time::SystemTime;
 
     #[test]
     fn message_serde() {
@@ -373,7 +372,6 @@ mod test {
 
         let msg = OverlayMessage::new(
             1,
-            0,
             &peer1, 
             &peer2, 
             &peer3, 
@@ -393,16 +391,15 @@ mod test {
         let payload = [42_u8; 10];
         let peer = Peer::from_bytes(&[1]);
 
-        let ts = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos() as u64;
-
         let mut msg = OverlayMessage::new(
             0b00100000000000000000000000000000,
-            ts,
             &peer,
             &peer,
             &peer,
             &payload
         );
+
+        msg.set_timestamp_now();
 
         msg.set_relay(false);
         msg.set_relay_method(RelayMethodKind::LOOKUP_TABLE_1);
@@ -430,16 +427,16 @@ mod test {
         let payload = [1_u8; 2];
         let peer = Peer::from_bytes(&[1]);
         
-        let ts = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos() as u64;
 
         let mut msg = OverlayMessage::new(
             0b00100000000000000000000000000000,
-            ts,
             &peer,
             &peer,
             &peer,
             &payload
         );
+
+        msg.set_timestamp_now();
 
         msg.set_fanout(10).unwrap();
         msg.set_ttl(15).unwrap();

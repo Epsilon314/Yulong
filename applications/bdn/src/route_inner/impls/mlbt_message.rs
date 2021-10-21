@@ -1,3 +1,5 @@
+use std::convert::TryInto;
+
 use prost_types;
 use crate::bdn_message::MlbtMessage;
 
@@ -7,7 +9,7 @@ use yulong_network::identity::Peer;
 
 use num_traits::{FromPrimitive, ToPrimitive};
 
-#[derive(FromPrimitive, ToPrimitive)]
+#[derive(FromPrimitive, ToPrimitive, Clone, Copy)]
 pub enum RelayMsgKind {
     JOIN = 0,
     LEAVE = 1,
@@ -40,6 +42,22 @@ impl RelayCtlMessage {
             payload: payload.into_bytes().unwrap()
         }
     }
+
+
+    pub fn msg_type(&self) -> RelayMsgKind {
+        self.msg_type
+    }
+
+
+    pub fn msg_id(&self) -> u64 {
+        self.msg_id
+    }
+
+
+    pub fn payload(&self) -> Vec<u8> {
+        self.payload.clone()
+    }
+
 }
 
 // define payload structures for each msg_type
@@ -47,7 +65,7 @@ impl RelayCtlMessage {
 
 // join message only need to specify the broadcast tree to join by 
 // including its src id
-struct RelayMsgJoin {
+pub struct RelayMsgJoin {
     src: Peer
 }
 
@@ -65,7 +83,7 @@ impl AsBytes for RelayMsgJoin {
 }
 
 
-struct RelayMsgLeave {
+pub struct RelayMsgLeave {
     src: Peer
 }
 
@@ -85,29 +103,62 @@ impl AsBytes for RelayMsgLeave {
 }
 
 
-// accept is an empty message
-struct RelayMsgAccept {}
+
+pub struct RelayMsgAccept {
+    ack: u64,
+}
+
 
 impl AsBytes for RelayMsgAccept {
     fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
-        Ok(vec![])
+        Ok(self.ack.to_be_bytes().to_vec())
     }
 
-    fn from_bytes(_: &[u8]) -> Result<Self, DeserializeError> {
-        Ok(Self{})
+    fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
+        if buf.len() == 8 {
+            Ok(Self {ack: u64::from_be_bytes(buf[0..8].try_into().unwrap())})
+        }
+        else {
+            return Err(DeserializeError::new("RelayMsgAccept::from_bytes wrong size", DumbError));
+        }
     }
 }
 
 
-// reject is an empty message
-struct RelayMsgReject {}
+impl RelayMsgAccept {
+    
+    // reply with msg_id to indicate accept which message
+    pub fn new(income: &RelayCtlMessage) -> Self {
+        Self{ack: income.msg_id}
+    }
+}
+
+
+
+pub struct RelayMsgReject {
+    ack: u64,
+}
 
 impl AsBytes for RelayMsgReject {
     fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
-        Ok(vec![])
+        Ok(self.ack.to_be_bytes().to_vec())
     }
 
-    fn from_bytes(_: &[u8]) -> Result<Self, DeserializeError> {
-        Ok(Self{})
+    fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
+        if buf.len() == 8 {
+            Ok(Self {ack: u64::from_be_bytes(buf[0..8].try_into().unwrap())})
+        }
+        else {
+            return Err(DeserializeError::new("RelayMsgReject::from_bytes wrong size", DumbError));
+        }
+    }
+}
+
+
+impl RelayMsgReject {
+
+    // reply with msg_id to indicate reject which message
+    pub fn new(income: &RelayCtlMessage) -> Self {
+        Self{ack: income.msg_id}
     }
 }
