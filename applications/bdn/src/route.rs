@@ -4,7 +4,6 @@ use yulong::utils::bidirct_hashmap::BidirctHashmap;
 use yulong_network::{identity::Peer};
 use std::hash::Hash;
 use std::{collections::HashMap, fmt::Debug};
-use std::marker::PhantomData;
 
 use crate::msg_header::{MsgType, MsgTypeKind};
 use crate::{
@@ -50,7 +49,7 @@ pub struct Route<R: RelayCtl> {
 
     route_table: RouteTable,
 
-    relay_method_in_use: PhantomData<R>,
+    relay_mod: R,
 }
 
 pub struct RouteTable {
@@ -96,7 +95,7 @@ impl<R: RelayCtl> Route<R> {
         Self {
             route_table: RouteTable::new(),
 
-            relay_method_in_use: PhantomData::<R>,
+            relay_mod: R::new(),
         }
     }
 
@@ -108,8 +107,7 @@ impl<R: RelayCtl> Route<R> {
         // BDN decides when & how to send them, do not assume the order of transmission
         let mut reply_list = Vec::<OverlayMessage>::new();
 
-        let ctl_msgs = 
-            R::relay_ctl_callback(&mut self.route_table, &msg.from(), &msg.payload());
+        let ctl_msgs = self.relay_mod.relay_ctl_callback(&mut self.route_table, &msg.from(), &msg.payload());
         
         for (peer, payload) in ctl_msgs {
             let packed_message = OverlayMessage::new(

@@ -83,6 +83,13 @@ impl AsBytes for RelayMsgJoin {
 }
 
 
+impl RelayMsgJoin {
+    pub fn src(&self) -> Peer {
+        self.src.clone()
+    }
+}
+
+
 pub struct RelayMsgLeave {
     src: Peer
 }
@@ -99,6 +106,13 @@ impl AsBytes for RelayMsgLeave {
             .map_err(|error| DeserializeError::new(
                 "RelayMsgJoin::from_bytes failed to parse src peer id", error
             ))
+    }
+}
+
+
+impl RelayMsgLeave {
+    pub fn src(&self) -> Peer {
+        self.src.clone()
     }
 }
 
