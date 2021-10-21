@@ -1,7 +1,6 @@
 use std::error::Error;
 use std::fmt::{self, Debug, Display};
 
-use yulong::error::DumbError;
 
 #[derive(Debug)]
 pub struct BadFieldError {

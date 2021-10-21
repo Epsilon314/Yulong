@@ -33,6 +33,19 @@ impl<K, V> BidirctHashmap<K, V>
     }
 
 
+    pub fn contains_pair(&self, k: &K, v: &V) -> bool {
+        
+        // checking half is enough since we always operate
+        // on k_v and v_k in mirror
+        if let Some(p) = self.k_v.get(k) {
+            if *p == *v {
+                return true;
+            }
+        }
+        false
+    }
+
+
     pub fn get_by_key(&self, k: &K) -> Option<&V> {
         self.k_v.get(k)
     }
