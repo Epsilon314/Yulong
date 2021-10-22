@@ -51,15 +51,18 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
         let (sender, receiver) = 
             mpsc::channel::<MessageWithIp>();
 
+        // todo: read from config or generate new
+        let id = Me::new();
+
         Self {
-            local_identity: Me::new(),
+            local_identity: id.clone(),
             
             address_book: BidirctHashmap::<Peer, SocketAddrBi>::new(),
             
             w_stream: HashMap::<Peer, <T as Transport>::Stream>::new(),
             msg_sender: sender,
             msg_receiver: receiver,
-            route: Route::new(),
+            route: Route::new(&id.peer),
         }
     }
 
@@ -99,7 +102,6 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
 
         } {}
     }
-
 
     pub async fn connect(&mut self) {
         for (peer, addr) in self.address_book.iter() {
@@ -195,6 +197,7 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
         }
         self.send_to(&next.unwrap(), msg).await;
     }
+    
 
     pub async fn handle_ingress(
         s: <T as Transport>::Stream,
@@ -232,25 +235,30 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
             debug!("BDN::handle_ingress: receive {} bytes payload",
                 overlay_msg.payload().len());
 
-            match sender.send((remote_sock ,overlay_msg)) {
+            match sender.send((remote_sock ,overlay_msg.clone())) {
                 Ok(_) => {}
                 Err(error) => {
                     warn!("BDN::handle_ingress: {}", error);
                     // log the error and continue, only EOF will shutdown the listening thread
                 }
             };
+
         }
     }
+
 }
 
 
 /// Loop polling BDN to activate it
 /// BDN will not actually process incoming messages but only store it until 
 /// you poll it.
+/// 
+/// todo: rework 
 impl<T: Transport, R: RelayCtl> Iterator for BDN<T, R> {
     type Item = MessageWithIp;
 
     fn next(&mut self) -> Option<Self::Item> {
+
         
         // get a message from the receiver queue
         let msg = self.msg_receiver.recv();
@@ -310,6 +318,7 @@ impl<T: Transport, R: RelayCtl> Iterator for BDN<T, R> {
             }
         }
 
+
         // dispatch messages
         match incoming_msg.get_type() {
             
@@ -353,11 +362,12 @@ impl<T: Transport, R: RelayCtl> Iterator for BDN<T, R> {
 
 #[cfg(test)]
 mod test {
-    use std::{net::{IpAddr}, str::FromStr};
+    use std::{net::{IpAddr}, str::FromStr, thread};
 
     use crate::{message, overlay::SocketAddrBi};
 
     use super::BDN;
+    use ::log::debug;
     use yulong_tcp::TcpContext;
     use yulong_quic::QuicContext;
     use crate::route_inner::impls::mlbt::MlbtRelayCtlContext;
@@ -389,24 +399,28 @@ mod test {
         );
 
         let mut m1 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &[1,2,3]);
+            0b00110000000000000000000000000000, &peer, &peer, &peer, &[1,2,3]);
 
         let mut m2 = message::OverlayMessage::new(
-            0, &peer, &peer, &peer, &[1,2,3,4,5,6]);
+            0b00110000000000000000000000000000, &peer, &peer, &peer, &[1,2,3,4,5,6]);
 
         let mut m3 = message::OverlayMessage::new(
-            0,  &peer, &peer, &peer, &payload);
+            0b00110000000000000000000000000000,  &peer, &peer, &peer, &payload);
 
         let mut m4 = message::OverlayMessage::new(
-            0,  &peer, &peer, &peer, &[1,2,3]);
+            0b00110000000000000000000000000000,  &peer, &peer, &peer, &[1,2,3]);
 
         bdn.connect().await;
         bdn.send_to(&peer, &mut m1).await;
         bdn.send_to(&peer, &mut m2).await;
         bdn.send_to(&peer, &mut m3).await;
         bdn.send_to(&peer, &mut m4).await;
-
-        server.await;    // run forever
+        
+        loop {
+            if let Some((sock, msg)) = bdn.next() {
+                debug!("recv:\n{}", &msg);
+            }
+        }
     }
 
     #[async_std::test]
@@ -426,22 +440,23 @@ mod test {
         );
 
         let payload = [42_u8; 1900];
+
         
         let server = async_std::task::spawn(
             BDN::<QuicContext, MlbtRelayCtlContext>::listen(9002, bdn.msg_sender.clone())
         );
         
         let mut m1 = message::OverlayMessage::new(
-            0,  &peer, &peer, &peer, &[1,2,3]);
+            0b00110000000000000000000000000000,  &peer, &peer, &peer, &[1,2,3]);
 
         let mut m2 = message::OverlayMessage::new(
-            0,  &peer, &peer, &peer, &[1,2,3,4,5,6]);
+            0b00110000000000000000000000000000,  &peer, &peer, &peer, &[1,2,3,4,5,6]);
 
         let mut m3 = message::OverlayMessage::new(
-            0,  &peer, &peer, &peer, &payload);
+            0b00110000000000000000000000000000,  &peer, &peer, &peer, &payload);
 
         let mut m4 = message::OverlayMessage::new(
-            0,  &peer, &peer, &peer, &[1,2,3]);
+            0b00110000000000000000000000000000,  &peer, &peer, &peer, &[1,2,3]);
 
         bdn.connect().await;
         bdn.send_to(&peer, &mut m1).await;
@@ -449,7 +464,12 @@ mod test {
         bdn.send_to(&peer, &mut m3).await;
         bdn.send_to(&peer, &mut m4).await;
 
-        server.await;   // run forever
+
+        loop {
+            if let Some((sock, msg)) = bdn.next() {
+                debug!("recv:\n{}", &msg);
+            }
+        }
     }
 
 }

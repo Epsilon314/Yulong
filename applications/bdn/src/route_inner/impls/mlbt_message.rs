@@ -58,6 +58,24 @@ impl RelayCtlMessage {
         self.payload.clone()
     }
 
+
+    pub fn accept(&self, seq: u64) -> Self {
+        Self::new(
+            RelayMsgKind::ACCEPT,
+            seq,
+            RelayMsgAccept::new(self)
+        )
+    }
+
+
+    pub fn reject(&self, seq: u64) -> Self {
+        Self::new(
+            RelayMsgKind::REJECT,
+            seq,
+            RelayMsgReject::new(self)
+        )
+    }
+
 }
 
 // define payload structures for each msg_type
@@ -65,6 +83,7 @@ impl RelayCtlMessage {
 
 // join message only need to specify the broadcast tree to join by 
 // including its src id
+#[derive(Debug)]
 pub struct RelayMsgJoin {
     src: Peer
 }
@@ -84,6 +103,13 @@ impl AsBytes for RelayMsgJoin {
 
 
 impl RelayMsgJoin {
+
+    pub fn new(src: &Peer) -> Self {
+        Self {
+            src: src.to_owned(),
+        }
+    }
+
     pub fn src(&self) -> Peer {
         self.src.clone()
     }

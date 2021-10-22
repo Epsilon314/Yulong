@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use crate::route::AppLayerRouteUser;
 use crate::route_inner::RelayCtl;
 use crate::route::RouteTable;
@@ -16,13 +18,36 @@ use yulong::utils::AsBytes;
 pub struct MlbtRelayCtlContext {
     state: MlbtState,
     local_id: u64,
+
+    timers: CtlMsgCasualTimer,
 }
+
 
 enum MlbtState {
     IDLE,   // uninitialized
     INIT,   // initializing
     ESTB,   // running
+    JOIN_WAIT((Peer, u64)),
 }
+
+
+struct CtlMsgCasualTimer {
+    last_seen: Option<SystemTime>,
+}
+
+
+impl CtlMsgCasualTimer {
+    fn new() -> Self {
+        Self {
+            last_seen: None,
+        }
+    }
+
+    fn set_now(&mut self) {
+        self.last_seen = Some(SystemTime::now());
+    }
+}
+
 
 impl RelayCtl for MlbtRelayCtlContext {
 
@@ -30,6 +55,7 @@ impl RelayCtl for MlbtRelayCtlContext {
         Self {
             local_id: 0,
             state: MlbtState::IDLE,
+            timers: CtlMsgCasualTimer::new(),
         }
     }
 
@@ -119,46 +145,87 @@ impl MlbtRelayCtlContext {
     {
         let mut ret: Vec<(Peer, RelayCtlMessage)> = vec![];
         
-        match RelayMsgJoin::from_bytes(&msg.payload()) {
-            Ok(join_msg) => {
+        let join_msg = RelayMsgJoin::from_bytes(&msg.payload());
+        if join_msg.is_err() {
+            warn!("MlbtRelayCtlContext::join_callback parse RelayMsgJoin failed: {}",
+                join_msg.unwrap_err());
+            // ignore ill-formed messages
+            return ret; 
+        }
+        let join_msg = join_msg.unwrap();
 
-                // already have too many links, reject new ones
-                if route_ctl.get_relay_count() >= RouteTable::MAX_LINK {
+        // already have too many links, reject new ones
+        if route_ctl.get_relay_count() >= RouteTable::MAX_LINK {
+            ret.push((
+                sender.to_owned(),
+                msg.reject(self.seq())
+            ));
+            return ret; 
+        }
+
+        // accept it
+        match &self.state {
+            MlbtState::JOIN_WAIT((cand, _)) => {
+                
+                // waiting for sender, one with bigger peer id accepts
+                if *cand == *sender && route_ctl.local_id() > *sender {
                     ret.push((
                         sender.to_owned(),
-
-                        RelayCtlMessage::new(
-                            RelayMsgKind::REJECT,
-                            self.seq(),
-                            RelayMsgReject::new(msg)
-                        )
+                        msg.accept(self.seq())
                     ));
+
+                    return ret;
                 }
 
-                // accept it
-                else {
-                    
-                    // add relay to route_table
-                    route_ctl.insert_relay(&join_msg.src(), sender);
-
-                    ret.push((
-                        sender.to_owned(),
-
-                        RelayCtlMessage::new(
-                            RelayMsgKind::ACCEPT, 
-                            self.seq(), 
-                            RelayMsgAccept::new(msg)
-                        )
-                    ));
-                }
+                // reject other join requests
+                ret.push((
+                    sender.to_owned(),
+                    msg.reject(self.seq())
+                ));
+                return ret;
             }
 
-            Err(error) => {
-                warn!("MlbtRelayCtlContext::join_callback parse RelayMsgJoin failed: {}", error);
-                // ignore ill-formed messages 
+            _ => {
+                // nothing special, add relay to route_table
+                route_ctl.insert_relay(&join_msg.src(), sender);
+
+                ret.push((
+                    sender.to_owned(),
+                    msg.accept(self.seq())
+                ));
             }
         }
         ret
+    }
+
+
+    fn join(&mut self, target: &Peer, src: &Peer) -> Vec<(Peer, RelayCtlMessage)> {
+        
+        let mut ret: Vec<(Peer, RelayCtlMessage)> = vec![];
+        let req_seq = self.seq();
+
+        // log the time a join quest is made
+        self.timers.set_now();
+
+        // todo: figure out send_to success / failed 
+        self.state = MlbtState::JOIN_WAIT((target.to_owned(), req_seq));
+
+        ret.push((
+            target.to_owned(),
+            RelayCtlMessage::new(
+                RelayMsgKind::JOIN,
+                req_seq,
+                RelayMsgJoin::new(src)
+            )
+        ));
+
+        ret
+    }
+
+
+    // handle incoming reply to a prev join msg
+    fn join_pending(&mut self, waitfor: &Peer, res: bool) -> Vec<(Peer, RelayCtlMessage)> {
+        todo!()
     }
 
 
@@ -175,12 +242,7 @@ impl MlbtRelayCtlContext {
                 // acknowledge relay entry has been removed (todo: make this optional)
                 ret.push((
                     sender.to_owned(),
-
-                    RelayCtlMessage::new(
-                        RelayMsgKind::LEAVE, 
-                        self.seq(), 
-                        RelayMsgAccept::new(msg)
-                    )
+                    msg.accept(self.seq())
                 ));
             }
 
@@ -191,12 +253,6 @@ impl MlbtRelayCtlContext {
         }
         
         ret
-    }
-
-
-    // handle incoming reply to a prev join msg
-    fn join_pending() {
-
     }
     
 }

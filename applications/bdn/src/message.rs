@@ -44,14 +44,14 @@ pub struct OverlayMessage {
 impl OverlayMessage {
 
     pub fn new(
-        msg_type: u32,
+        header: u32,
         src_id: &Peer, 
         from_id: &Peer,
         dst_id: &Peer,
         payload: &[u8]
     ) -> Self {
         Self {
-            header: msg_type,
+            header,
             // timestamp is filled just be send
             timestamp: 0,
             src_id: src_id.to_owned(),

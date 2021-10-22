@@ -11,6 +11,8 @@ use yulong::error::DumbError;
 use crate::error::TryfromSliceError;
 use crypto::{PublicKey, PrivateKey, Signer, sm_signer::SmSigner};
 
+
+#[derive(Clone)]
 pub struct Me {
     pub peer: Peer,
     pub privatekey: PrivateKey
@@ -67,6 +69,14 @@ impl PartialEq for Peer {
 }
 
 impl Eq for Peer {}
+
+
+impl PartialOrd for Peer {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.raw_id.partial_cmp(&other.raw_id)
+    }
+}
+
 
 impl Display for Peer{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
