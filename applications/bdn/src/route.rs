@@ -161,6 +161,7 @@ impl AppLayerRouteUser for RouteTable {
         }
     }
 
+    
     fn get_delegate(&self, src: &Self::Host) -> Option<Self::Host> {
         self.delegates.get_by_key(src).map(|p| p.to_owned())
     }
@@ -259,13 +260,16 @@ impl AppLayerRouteInner for RouteTable {
         }
     }
 
+
     fn get_relay_count(&self) -> u32 {
         self.relay_counter
     }
 
+
     fn get_relay_count_by_tree(&self, src: &Self::Host) -> u32 {
         *self.relay_ct_per_tree.get(src).unwrap_or(&0)
     }
+
 
     fn reg_delegate(&mut self, src: &Self::Host, del: &Self::Host) {
         if let Some(d) = self.delegates.get_by_key(src) {

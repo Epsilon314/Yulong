@@ -171,6 +171,11 @@ impl RelayMsgAccept {
     pub fn new(income: &RelayCtlMessage) -> Self {
         Self{ack: income.msg_id}
     }
+
+
+    pub fn from_id(id: u64) -> Self {
+        Self{ack: id}
+    }
 }
 
 
