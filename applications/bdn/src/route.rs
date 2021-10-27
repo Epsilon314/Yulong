@@ -5,7 +5,8 @@ use yulong_network::{identity::Peer};
 use std::hash::Hash;
 use std::{collections::HashMap, fmt::Debug};
 
-use crate::msg_header::{MsgType, MsgTypeKind};
+use crate::msg_header::{MsgHeader, MsgType, MsgTypeKind, RelayMethodKind};
+
 use crate::{
     common::MessageWithIp,
     message::OverlayMessage,
@@ -45,6 +46,7 @@ pub trait AppLayerRouteInner: AppLayerRouteUser {
 
 }
 
+
 pub struct Route<R: RelayCtl> {
 
     route_table: RouteTable,
@@ -53,6 +55,8 @@ pub struct Route<R: RelayCtl> {
 }
 
 pub struct RouteTable {
+
+    local_id: Peer,
 
     delegates: BidirctHashmap<Peer, Peer>,
 
@@ -72,8 +76,10 @@ impl RouteTable {
 
     const DEL_NUM: u32 = 1;
 
-    pub fn new() -> Self {
+    pub fn new(local: &Peer) -> Self {
         Self {
+
+            local_id: local.to_owned(),
 
             delegates: BidirctHashmap::new(),
 
@@ -87,20 +93,25 @@ impl RouteTable {
             relay_ct_per_tree: HashMap::new(),
         }
     }
+
+
+    pub fn local_id(&self) -> Peer {
+        self.local_id.clone()
+    }
 }
 
 impl<R: RelayCtl> Route<R> {
 
-    pub fn new() -> Self {
+    pub fn new(local: &Peer) -> Self {
         Self {
-            route_table: RouteTable::new(),
+            route_table: RouteTable::new(local),
 
             relay_mod: R::new(),
         }
     }
 
 
-    // todo: accept a route related command; apply some changes; and return reaction
+    // accept a route related command; apply some changes; and return reaction
     pub fn handle_route_message(&mut self, msg: &OverlayMessage) -> Vec<OverlayMessage> {
 
         // Pack all messages to be sent and return it to bdn
@@ -111,7 +122,14 @@ impl<R: RelayCtl> Route<R> {
         
         for (peer, payload) in ctl_msgs {
             let packed_message = OverlayMessage::new(
-                ToPrimitive::to_u32(&MsgTypeKind::ROUTE_MSG).unwrap(),
+                MsgHeader::build(
+                    MsgTypeKind::ROUTE_MSG, 
+                    false, 
+                    RelayMethodKind::LOOKUP_TABLE_1, 
+                    0, 
+                    0
+                ).unwrap(),
+                
                
                 // to be filled by caller 
                 &Peer::BROADCAST_ID,
@@ -125,6 +143,37 @@ impl<R: RelayCtl> Route<R> {
         }
 
         reply_list
+    }
+
+
+    // no incoming message, invoked temporally
+    pub fn invoke_heartbeat(&self) -> Vec<OverlayMessage> {
+        let mut ret = Vec::<OverlayMessage>::new();
+
+        let ctl_msgs = self.relay_mod.heartbeat(&self.route_table);
+        for (peer, payload) in ctl_msgs {
+            let packed_message = OverlayMessage::new(
+                MsgHeader::build(
+                    MsgTypeKind::ROUTE_MSG, 
+                    false, 
+                    RelayMethodKind::LOOKUP_TABLE_1, 
+                    0, 
+                    0
+                ).unwrap(),
+
+                // to be filled by caller 
+                &Peer::BROADCAST_ID,
+
+                // to be filled by caller 
+                &Peer::BROADCAST_ID,
+
+                &peer,
+
+                &payload
+            );
+            ret.push(packed_message);
+        }
+        ret
     }
 
 }
@@ -152,6 +201,7 @@ impl AppLayerRouteUser for RouteTable {
         }
     }
 
+    
     fn get_delegate(&self, src: &Self::Host) -> Option<Self::Host> {
         self.delegates.get_by_key(src).map(|p| p.to_owned())
     }
@@ -250,13 +300,16 @@ impl AppLayerRouteInner for RouteTable {
         }
     }
 
+
     fn get_relay_count(&self) -> u32 {
         self.relay_counter
     }
 
+
     fn get_relay_count_by_tree(&self, src: &Self::Host) -> u32 {
         *self.relay_ct_per_tree.get(src).unwrap_or(&0)
     }
+
 
     fn reg_delegate(&mut self, src: &Self::Host, del: &Self::Host) {
         if let Some(d) = self.delegates.get_by_key(src) {
@@ -328,11 +381,13 @@ mod test {
     fn insert_remove_relay() {
         log::setup_logger("relay_test").unwrap();
 
-        let mut route = Route::<MlbtRelayCtlContext>::new();
         let p1 = Peer::from_bytes(&[1]);
         let p2 = Peer::from_bytes(&[2]);
         let p3 = Peer::from_bytes(&[3]);
         let p4 = Peer::from_bytes(&[4]);
+
+        let mut route = Route::<MlbtRelayCtlContext>::new(&p1);
+
         route.insert_relay(&p1, &p3);
         route.insert_relay(&p1, &p4);
         
@@ -349,11 +404,14 @@ mod test {
     #[test]
     fn insert_remove_route() {
         log::setup_logger("route_test").unwrap();
-        let mut route = Route::<MlbtRelayCtlContext>::new();
+
         let p1 = Peer::from_bytes(&[1]);
         let p2 = Peer::from_bytes(&[2]);
         let p3 = Peer::from_bytes(&[3]);
         let p4 = Peer::from_bytes(&[4]);
+
+        let mut route = Route::<MlbtRelayCtlContext>::new(&p1);
+
         route.insert_path(&p4, &p3);
         route.insert_path(&p3, &p3);
         route.insert_path(&p2, &p3);

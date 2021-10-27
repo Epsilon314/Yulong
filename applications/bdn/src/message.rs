@@ -44,14 +44,14 @@ pub struct OverlayMessage {
 impl OverlayMessage {
 
     pub fn new(
-        msg_type: u32,
+        header: u32,
         src_id: &Peer, 
         from_id: &Peer,
         dst_id: &Peer,
         payload: &[u8]
     ) -> Self {
         Self {
-            header: msg_type,
+            header,
             // timestamp is filled just be send
             timestamp: 0,
             src_id: src_id.to_owned(),
@@ -357,7 +357,7 @@ impl Display for OverlayMessage {
 mod test {
     
     use super::*;
-    use crate::msg_header::{MsgTypeKind, RelayMethodKind};
+    use crate::msg_header::{MsgHeader, MsgTypeKind, RelayMethodKind};
     use log::debug;
     use yulong::log::setup_logger;
 
@@ -449,5 +449,27 @@ mod test {
 
         assert_eq!(msg.get_fanout(), 10);
         assert_eq!(msg.get_ttl(), 10);
+    }
+
+
+    #[test]
+    fn msg_header_build() {
+        let header = MsgHeader::build(
+            MsgTypeKind::ROUTE_MSG,
+            false,
+            RelayMethodKind::LOOKUP_TABLE_1,
+            1,
+            15).unwrap();
+
+        let payload = [1_u8; 2];
+        let peer = Peer::from_bytes(&[1]);
+        let msg = OverlayMessage::new(header, &peer, &peer, &peer, &payload);
+        
+        
+        assert!(matches!(msg.get_type().unwrap(), MsgTypeKind::ROUTE_MSG));
+        assert_eq!(msg.is_relay(), false);
+        assert!(matches!(msg.get_relay_method().unwrap(), RelayMethodKind::LOOKUP_TABLE_1));
+        assert_eq!(msg.get_fanout(), 1);
+        assert_eq!(msg.get_ttl(), 15);
     }
 }

@@ -84,6 +84,7 @@ impl AsBytes for PublicKey {
 
 }
 
+#[derive(Clone)]
 pub enum PrivateKey {
     SM2(SmSecKey),
     NoKey

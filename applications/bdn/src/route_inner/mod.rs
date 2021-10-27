@@ -9,11 +9,12 @@ use yulong_network::identity::Peer;
 /// RouteTable configurations.
 /// 
 /// message is defined by concrete implementations, thus declared as bytes.
-pub trait RelayCtl {
+pub trait RelayCtl: Send {
 
     fn new() -> Self;
 
-    fn heartbeat(&mut self, route_ctl: &mut RouteTable) -> Vec<(Peer, Vec<u8>)>;
+    // will not modify RouteTable 
+    fn heartbeat(&self, route_ctl: &RouteTable) -> Vec<(Peer, Vec<u8>)>;
 
     fn bootstrap(&mut self, route_ctl: &mut RouteTable) -> Vec<(Peer, Vec<u8>)>;
 
