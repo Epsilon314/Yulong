@@ -1,4 +1,3 @@
-use log::{debug, error, info, trace, warn};
 use chrono;
 
 pub fn setup_logger(log_file_name: &str) -> Result<(), fern::InitError> {

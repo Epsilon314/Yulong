@@ -5,7 +5,8 @@ use yulong_network::{identity::Peer};
 use std::hash::Hash;
 use std::{collections::HashMap, fmt::Debug};
 
-use crate::msg_header::{MsgType, MsgTypeKind};
+use crate::msg_header::{MsgHeader, MsgType, MsgTypeKind, RelayMethodKind};
+
 use crate::{
     common::MessageWithIp,
     message::OverlayMessage,
@@ -44,6 +45,7 @@ pub trait AppLayerRouteInner: AppLayerRouteUser {
     fn get_relay_count_by_tree(&self, src: &Self::Host) -> u32;
 
 }
+
 
 pub struct Route<R: RelayCtl> {
 
@@ -109,7 +111,7 @@ impl<R: RelayCtl> Route<R> {
     }
 
 
-    // todo: accept a route related command; apply some changes; and return reaction
+    // accept a route related command; apply some changes; and return reaction
     pub fn handle_route_message(&mut self, msg: &OverlayMessage) -> Vec<OverlayMessage> {
 
         // Pack all messages to be sent and return it to bdn
@@ -120,7 +122,14 @@ impl<R: RelayCtl> Route<R> {
         
         for (peer, payload) in ctl_msgs {
             let packed_message = OverlayMessage::new(
-                ToPrimitive::to_u32(&MsgTypeKind::ROUTE_MSG).unwrap(),
+                MsgHeader::build(
+                    MsgTypeKind::ROUTE_MSG, 
+                    false, 
+                    RelayMethodKind::LOOKUP_TABLE_1, 
+                    0, 
+                    0
+                ).unwrap(),
+                
                
                 // to be filled by caller 
                 &Peer::BROADCAST_ID,
@@ -134,6 +143,37 @@ impl<R: RelayCtl> Route<R> {
         }
 
         reply_list
+    }
+
+
+    // no incoming message, invoked temporally
+    pub fn invoke_heartbeat(&self) -> Vec<OverlayMessage> {
+        let mut ret = Vec::<OverlayMessage>::new();
+
+        let ctl_msgs = self.relay_mod.heartbeat(&self.route_table);
+        for (peer, payload) in ctl_msgs {
+            let packed_message = OverlayMessage::new(
+                MsgHeader::build(
+                    MsgTypeKind::ROUTE_MSG, 
+                    false, 
+                    RelayMethodKind::LOOKUP_TABLE_1, 
+                    0, 
+                    0
+                ).unwrap(),
+
+                // to be filled by caller 
+                &Peer::BROADCAST_ID,
+
+                // to be filled by caller 
+                &Peer::BROADCAST_ID,
+
+                &peer,
+
+                &payload
+            );
+            ret.push(packed_message);
+        }
+        ret
     }
 
 }

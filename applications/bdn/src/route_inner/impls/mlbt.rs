@@ -111,7 +111,7 @@ impl RelayCtl for MlbtRelayCtlContext {
 
 
     // called on temporal manner
-    fn heartbeat(&mut self, route_ctl: &mut RouteTable) -> Vec<(Peer, Vec<u8>)> {
+    fn heartbeat(&self, route_ctl: &RouteTable) -> Vec<(Peer, Vec<u8>)> {
         
         let mut ret: Vec<(Peer, Vec<u8>)> = vec![];
 
@@ -174,7 +174,8 @@ impl MlbtRelayCtlContext {
 
             MlbtState::JOIN_PRE((src, subscriber, _)) => {
                 if self.join_pre_timer.is_timeout() {
-
+                    
+                    // only estb nodes will accept join request and enter this state
                     self.state = MlbtState::ESTB;
                 }
             }
@@ -212,7 +213,7 @@ impl MlbtRelayCtlContext {
 
         // accept it
         match self.state.clone() {
-            MlbtState::JOIN_WAIT((src, cand, _)) => {
+            MlbtState::JOIN_WAIT((_, cand, _)) => {
                 
                 // waiting for sender, one with bigger peer id accepts
                 if cand == *sender && route_ctl.local_id() > *sender {

@@ -44,8 +44,34 @@ impl MsgHeader {
 
 impl MsgHeader {
     // build header from fields
-    fn build() -> u32 {
-        unimplemented!()
+    pub fn build(
+        msg_type: MsgTypeKind, 
+        is_relay: bool, 
+        relay_method: RelayMethodKind, 
+        fanout: u32, 
+        ttl: u32) -> Option<u32> 
+    {
+        let mut header: u32 = 0;
+
+        if MsgType::set_msg_type(&mut header, msg_type).is_none() {
+            return None;
+        }
+
+        RelayFlag::set_relay_flag(&mut header, is_relay);
+
+        if RelayMethod::set_relay_method(&mut header, relay_method).is_none() {
+            return None;
+        }
+
+        if FanOut::set_fan_out(&mut header, fanout).is_none() {
+            return None;
+        }
+
+        if TTL::set_ttl(&mut header, ttl).is_none() {
+            return None;
+        }
+
+        Some(header)
     }
 }
 

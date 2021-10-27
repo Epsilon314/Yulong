@@ -3,6 +3,7 @@ use futures::{AsyncWriteExt};
 use yulong::utils::{
     bidirct_hashmap::BidirctHashmap,
     AsBytes,
+    CasualTimer,
 };
 
 
@@ -12,22 +13,18 @@ use yulong_network::{
     transport::Transport,
 };
 
-use std::{
-    collections::HashMap,
-    net::{SocketAddr, IpAddr, Ipv4Addr,},
-    sync::mpsc,
-};
+use std::{collections::HashMap, net::{SocketAddr, IpAddr, Ipv4Addr,}, sync::mpsc, time::Duration};
 
 use log::{warn, info, debug};
 use async_std::{io::BufReader};
 
-use crate::{message, msg_header::MsgTypeKind, route::Route, route::AppLayerRouteUser};
+use crate::{message::{self, OverlayMessage}, msg_header::MsgTypeKind, route::AppLayerRouteUser, route::Route};
 use crate::common::{SocketAddrBi, MessageWithIp};
 use crate::configs::{DEFAULT_BDN_PORT, MSG_MAXLEN};
 
 use crate::route_inner::RelayCtl;
 
-pub struct BDN<T: Transport, R: RelayCtl> {
+pub struct BDN<T: Transport, R: RelayCtl + Send + Sync> {
 
     local_identity: Me,
 
@@ -41,11 +38,16 @@ pub struct BDN<T: Transport, R: RelayCtl> {
     msg_receiver: mpsc::Receiver<MessageWithIp>,
 
     route: Route<R>,
+
+    heartbeat_timer: CasualTimer,
 }
 
 
-impl<T: Transport, R: RelayCtl> BDN<T, R> {
+impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
+
+    const HEARTBEAT_INV: u128 = 5000; // ms
     
+
     pub fn new() -> Self {
 
         let (sender, receiver) = 
@@ -53,6 +55,9 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
 
         // todo: read from config or generate new
         let id = Me::new();
+
+        let mut timer = CasualTimer::new(Self::HEARTBEAT_INV);
+        timer.set_now();
 
         Self {
             local_identity: id.clone(),
@@ -63,6 +68,7 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
             msg_sender: sender,
             msg_receiver: receiver,
             route: Route::new(&id.peer),
+            heartbeat_timer: timer,
         }
     }
 
@@ -102,6 +108,7 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
 
         } {}
     }
+
 
     pub async fn connect(&mut self) {
         for (peer, addr) in self.address_book.iter() {
@@ -177,6 +184,8 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
     }
 
 
+    // todo!
+    // rename it to something like  and impl a true broadcast
     pub async fn broadcast(&mut self, src: &Peer, msg: &mut message::OverlayMessage) {
 
         let relay_list = self.route.get_relay(&src);
@@ -242,23 +251,25 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
                     // log the error and continue, only EOF will shutdown the listening thread
                 }
             };
-
         }
     }
 
 }
 
 
-/// Loop polling BDN to activate it
+/// Main Event Loop for BDN
+/// poll it to activate BDN
+/// 
 /// BDN will not actually process incoming messages but only store it until 
 /// you poll it.
-/// 
-/// todo: rework 
-impl<T: Transport, R: RelayCtl> Iterator for BDN<T, R> {
-    type Item = MessageWithIp;
+impl<T: Transport, R: RelayCtl + Send + Sync> Iterator for BDN<T, R> {
+
+    type Item = OverlayMessage;
 
     fn next(&mut self) -> Option<Self::Item> {
 
+        // check heartbeat timer
+        self.check_heartbeat();
         
         // get a message from the receiver queue
         let msg = self.msg_receiver.recv();
@@ -268,80 +279,28 @@ impl<T: Transport, R: RelayCtl> Iterator for BDN<T, R> {
             return None;
         }
 
-        // relay messages
-
-        // clone for modification
-        let (from_addr, mut incoming_msg) = msg.clone().unwrap();
-        
-        let carried_idt = incoming_msg.from();
-        let from_idt: &Peer;
-
-        // do not carry an common peer id, use addr to get peer id
-        if !carried_idt.common() {
-            let stored_peer = self.address_book.get_by_value(&from_addr);
-            if stored_peer.is_none() {
-                // unknown from, return early
-            }
-            from_idt = &stored_peer.unwrap();
+        // update the identity-address map of incoming node
+        // return None if cannot figure out the identity of incoming node
+        let incoming_msg = self.from_id_handler(msg.unwrap());
+        if incoming_msg.is_none() {
+            return None;
         }
-        // contains from peer id, believe carried identity (todo: check sign aforehead)
-        else {
-            from_idt = &carried_idt;
-            // if carried peer is unknown, add it to address book
-            // else update it
-            let prev_addr = self.address_book.get_by_key(&carried_idt);
-            if prev_addr.is_none() {
-                self.address_book.insert(from_idt, &from_addr);
-            }
-            else {
-                if *prev_addr.unwrap() != from_addr {
-                    info!("BDN::next Peer {} moved from {} to {}", 
-                        from_idt, prev_addr.unwrap(), from_addr);
-                    self.address_book.update_by_key(from_idt, &from_addr);
-                }
-            }
-        }
+        let incoming_msg = incoming_msg.unwrap();
 
-        // todo: move to a relayer trait & impl it for each relay method
-        // handle relay messages in sequence
-        if incoming_msg.is_relay() {
-
-            let src = &incoming_msg.src();
-            incoming_msg.set_from(&self.local_identity.peer);
-
-            let relay_list = self.route.get_relay(src);
-            for next_node in relay_list {
-                
-                // send it in sequence
-                async_std::task::block_on(
-                    self.send_to(&next_node, &mut incoming_msg));
-            }
-        }
-
+        // relay module will take a clone in case it changes the message before relaying it
+        self.relay_handler(incoming_msg.clone());
 
         // dispatch messages
         match incoming_msg.get_type() {
             
             // payload_msg is returned to the caller
             Ok(MsgTypeKind::PAYLOAD_MSG) => {
-                Some(msg.unwrap())
+                Some(incoming_msg)
             }
 
             Ok(MsgTypeKind::ROUTE_MSG) => {
-
-                // pass it to route module
-                let reply_list = self.route.handle_route_message(&incoming_msg);
-                
-                // send reply immediately and in sequence
-                for mut msg in reply_list {
-
-                    msg.set_src(&self.local_identity.peer);
-                    msg.set_from(&self.local_identity.peer);
-
-                    async_std::task::block_on(
-                        self.send_to(&msg.dst(), &mut msg));
-                }
-                
+                // hand it to route module
+                self.route_message_dispatcher(incoming_msg);
                 None
             }
 
@@ -359,12 +318,109 @@ impl<T: Transport, R: RelayCtl> Iterator for BDN<T, R> {
     }
 }
 
+// inner method for main event loop
+impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
+
+    fn from_id_handler(&mut self, msg: (SocketAddrBi, OverlayMessage))
+        -> Option<OverlayMessage> 
+    {
+        
+        // clone for modification
+        let (from_addr, mut incoming_msg) = msg.to_owned();
+                
+        let carried_idt = incoming_msg.from();
+
+        // do not carry an common peer id, use addr to get peer id
+        if !carried_idt.common() {
+            let stored_peer = self.address_book.get_by_value(&from_addr);
+            if stored_peer.is_none() {
+                // unknown from, return early
+                warn!("BDN::from_id_handler unknown from peer at address: {}", from_addr);
+                return None;
+            }
+            incoming_msg.set_from(stored_peer.unwrap());
+        }
+
+        // contains from peer id, believe carried identity (todo: check sign aforehead)
+        else {
+            // if carried peer is unknown, add it to address book
+            // else update it
+            let prev_addr = self.address_book.get_by_key(&carried_idt);
+            if prev_addr.is_none() {
+                self.address_book.insert(&carried_idt, &from_addr);
+            }
+            else {
+                if *prev_addr.unwrap() != from_addr {
+                    info!("BDN::from_id_handler Peer {} moved from {} to {}", 
+                        carried_idt, prev_addr.unwrap(), from_addr);
+                    self.address_book.update_by_key(&carried_idt, &from_addr);
+                }
+            }
+        }
+
+        Some(incoming_msg)
+    }
+
+
+    fn relay_handler(&mut self, mut incoming_msg: OverlayMessage) {
+        // relay messages
+        // handle relay messages in sequence
+        if incoming_msg.is_relay() {
+
+            let src = &incoming_msg.src();
+            incoming_msg.set_from(&self.local_identity.peer);
+
+            let relay_list = self.route.get_relay(src);
+            for next_node in relay_list {
+                
+                // send it in sequence
+                async_std::task::block_on(
+                    self.send_to(&next_node, &mut incoming_msg));
+            }
+        }
+    }
+
+
+    fn route_message_dispatcher(&mut self, incoming_msg: OverlayMessage) {
+        
+        // pass it to route module
+        let reply_list = self.route.handle_route_message(&incoming_msg);
+        
+        // send reply immediately and in sequence
+        for mut msg in reply_list {
+
+            msg.set_src(&self.local_identity.peer);
+            msg.set_from(&self.local_identity.peer);
+
+            async_std::task::block_on(
+                self.send_to(&msg.dst(), &mut msg));
+        }
+    }
+
+
+    fn check_heartbeat(&mut self) {
+        if self.heartbeat_timer.is_timeout() {
+            let send_list = self.route.invoke_heartbeat();
+
+            for mut msg in send_list {
+
+                async_std::task::block_on(
+                    self.send_to(&msg.dst(), &mut msg)
+                );
+            }
+
+            self.heartbeat_timer.set_now();
+        }
+    }
+
+}
+
 
 #[cfg(test)]
 mod test {
-    use std::{net::{IpAddr}, str::FromStr, thread};
+    use std::{net::{IpAddr}, str::FromStr};
 
-    use crate::{message, overlay::SocketAddrBi};
+    use crate::{message, overlay::SocketAddrBi, route::AppLayerRouteUser};
 
     use super::BDN;
     use ::log::debug;
@@ -417,7 +473,7 @@ mod test {
         bdn.send_to(&peer, &mut m4).await;
         
         loop {
-            if let Some((sock, msg)) = bdn.next() {
+            if let Some(msg) = bdn.next() {
                 debug!("recv:\n{}", &msg);
             }
         }
@@ -466,7 +522,7 @@ mod test {
 
 
         loop {
-            if let Some((sock, msg)) = bdn.next() {
+            if let Some(msg) = bdn.next() {
                 debug!("recv:\n{}", &msg);
             }
         }

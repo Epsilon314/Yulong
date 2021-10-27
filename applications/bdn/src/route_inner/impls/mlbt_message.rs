@@ -1,6 +1,8 @@
 use std::convert::TryInto;
 
+use log::warn;
 use prost_types;
+use prost::Message;
 use crate::bdn_message::MlbtMessage;
 
 use yulong::utils::AsBytes;
@@ -24,13 +26,57 @@ pub struct RelayCtlMessage {
 }
 
 impl AsBytes for RelayCtlMessage {
+
     fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
-        todo!()
+
+        let protobuf_msg = MlbtMessage {
+            message_type: ToPrimitive::to_u32(&self.msg_type()).unwrap(),
+            message_id: self.msg_id,
+            payload: self.payload.clone(),
+        };
+
+        let protobuf_bytes_len = protobuf_msg.encoded_len();
+        let mut protobuf_buf: Vec<u8> = Vec::with_capacity(protobuf_bytes_len);
+        match protobuf_msg.encode(&mut protobuf_buf) {
+            Ok(_) => {
+                Ok(protobuf_buf)
+            }
+
+            Err(error) => {
+                Err(SerializeError::new(
+                    "RelayCtlMessage::into_bytes",
+                    error)
+                )
+            }
+        }
     }
 
+
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
-        todo!()
+        
+        match MlbtMessage::decode(buf) {
+            Ok(msg) => {
+
+                let mtype: Option<RelayMsgKind> = FromPrimitive::from_u32(msg.message_type);
+                if mtype.is_none() {
+                    warn!("RelayCtlMessage::from_bytes decode msg type error");
+                    return Err(DeserializeError::new("decode msg type error", DumbError))
+                }
+                let mtype = mtype.unwrap();
+
+                Ok(Self{
+                    msg_type: mtype,
+                    msg_id: msg.message_id,
+                    payload: msg.payload,
+                })
+            }
+            Err(error) => {
+                warn!("RelayCtlMessage::from_bytes decode error {}", error);
+                Err(DeserializeError::new("decode error", error))
+            }
+        }
     }
+
 }
 
 impl RelayCtlMessage {
