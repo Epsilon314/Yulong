@@ -15,6 +15,7 @@ pub trait AsBytes: Sized {
 
 /// count down timer
 /// set a count-down value, start the timer, and query whether the count-down value reaches 0
+#[derive(Clone)]
 pub struct CasualTimer {
     last_seen: Option<SystemTime>,
     counter: u128,

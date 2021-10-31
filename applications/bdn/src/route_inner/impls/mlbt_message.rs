@@ -11,7 +11,7 @@ use yulong_network::identity::Peer;
 
 use num_traits::{FromPrimitive, ToPrimitive};
 
-#[derive(FromPrimitive, ToPrimitive, Clone, Copy)]
+#[derive(FromPrimitive, ToPrimitive, Clone, Copy, Debug)]
 pub enum RelayMsgKind {
     JOIN = 0,
     LEAVE = 1,
@@ -19,6 +19,8 @@ pub enum RelayMsgKind {
     REJECT = 3,
 }
 
+
+#[derive(Debug)]
 pub struct RelayCtlMessage {
     msg_type: RelayMsgKind,
     msg_id: u64,
@@ -129,7 +131,7 @@ impl RelayCtlMessage {
 
 // join message only need to specify the broadcast tree to join by 
 // including its src id
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RelayMsgJoin {
     src: Peer
 }
@@ -222,6 +224,12 @@ impl RelayMsgAccept {
     pub fn from_id(id: u64) -> Self {
         Self{ack: id}
     }
+
+
+    pub fn ack(&self) -> u64 {
+        self.ack
+    }
+
 }
 
 
@@ -252,4 +260,41 @@ impl RelayMsgReject {
     pub fn new(income: &RelayCtlMessage) -> Self {
         Self{ack: income.msg_id}
     }
+}
+
+
+
+#[cfg(test)]
+mod test {
+
+    use log::debug;
+
+    use super::*;
+
+
+    #[test]
+    fn ctl_msg_serde() {
+
+        let peer = Peer::from_random();
+
+        let payload = RelayMsgJoin::new(&peer);
+
+        let msg = RelayCtlMessage::new(
+            RelayMsgKind::JOIN,
+            15514,
+            payload.clone()
+        );
+
+        let buf = msg.into_bytes().unwrap();
+        debug!("Serialized Message: {:?}", buf);
+
+        let de_msg = RelayCtlMessage::from_bytes(&buf).unwrap();
+
+        assert!(matches!(de_msg.msg_type(), RelayMsgKind::JOIN));
+        assert_eq!(de_msg.msg_id(), 15514);
+        assert_eq!(de_msg.payload(), payload.into_bytes().unwrap());
+    }
+
+
+
 }
