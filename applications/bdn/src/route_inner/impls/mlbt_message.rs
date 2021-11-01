@@ -260,6 +260,8 @@ impl RelayMsgReject {
     pub fn new(income: &RelayCtlMessage) -> Self {
         Self{ack: income.msg_id}
     }
+
+    pub fn ack(&self) -> u64 {self.ack}
 }
 
 

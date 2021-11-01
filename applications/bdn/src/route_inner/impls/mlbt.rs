@@ -1,5 +1,3 @@
-use core::time;
-use std::time::SystemTime;
 
 use crate::msg_header::MsgTypeKind;
 use crate::msg_header::RelayMethodKind;
@@ -16,9 +14,9 @@ use yulong_network::identity::Peer;
 use super::mlbt_message::{RelayCtlMessage, RelayMsgJoin,
     RelayMsgLeave, RelayMsgAccept, RelayMsgReject};
 
-
 use yulong::utils::AsBytes;
 use yulong::utils::CasualTimer;
+
 
 pub struct MlbtRelayCtlContext {
     state: MlbtState,
@@ -120,25 +118,30 @@ impl RelayCtl for MlbtRelayCtlContext {
         // err is processed, shadow it with some
         let parse_ctl_message = parse_ctl_message.unwrap();
 
-        // todo! timeout
-        // if is not in idle and timeout is reached
-        self.check_timers(route_ctl);
+        self.check_timers(route_ctl);   // todo: time triggered sending quests?
 
         match parse_ctl_message.msg_type() {
             
-            // todo pending callback dispatcher
             RelayMsgKind::ACCEPT => {
-
+                let reply = self.decision_dispatcher(
+                    route_ctl, &parse_ctl_message, true);
+                for (peer, ctl_msg_payload) in reply {
+                    ret.push((peer, ctl_msg_payload.into_bytes().unwrap()));
+                }
             }
 
             RelayMsgKind::REJECT => {
-                
+                let reply = self.decision_dispatcher(
+                    route_ctl, &parse_ctl_message, false);
+                for (peer, ctl_msg_payload) in reply {
+                    ret.push((peer, ctl_msg_payload.into_bytes().unwrap()));
+                }
             }
 
             RelayMsgKind::JOIN => {
-                let replys = self.join_callback(
+                let reply = self.join_cb(
                     route_ctl, sender, &parse_ctl_message);
-                for (peer, ctl_msg_payload) in replys {
+                for (peer, ctl_msg_payload) in reply {
                     // build a ctl msg and turn into bytes
                     ret.push((peer, ctl_msg_payload.into_bytes().unwrap()));
                 }
@@ -146,12 +149,7 @@ impl RelayCtl for MlbtRelayCtlContext {
             }
 
             RelayMsgKind::LEAVE => {
-                let replys = self.leave_callback(
-                    route_ctl, sender, &parse_ctl_message);
-                for (peer, ctl_msg_payload) in replys {
-                    // build a ctl msg and turn into bytes
-                    ret.push((peer, ctl_msg_payload.into_bytes().unwrap()));
-                }
+                self.leave_cb(route_ctl, sender, &parse_ctl_message);
             }
         
 
@@ -209,18 +207,17 @@ impl MlbtRelayCtlContext {
     // reset timeouted timers and recover states
     fn check_timers(&mut self, route_ctl: &mut RouteTable) {
 
-        
+        // linear check all wait timers
+        // todo! move as different functions if it grows too long
+
         if let Some(state) = self.wait_list.join_wait.clone() {
+
             if state.wait_timer.is_timeout() {
                 
                 match &state.inner {
-                    WaitStateKind::JOIN_WAIT((src, waitfor, _)) => {
-                        // todo! what's the previous state before join_wait?
-                                                
-                        self.state = MlbtState::IDLE;   // try to join other nodes
-                                                
+                    WaitStateKind::JOIN_WAIT((src, waitfor, _)) => {                        
                         // as if is rejected
-                        self.join_pending(route_ctl, &src, &waitfor, None);
+                        self.join_wait_cb(route_ctl, &src, &waitfor, None, false); // must be None
                     }
                     _ => {unreachable!()}
                 }
@@ -232,11 +229,12 @@ impl MlbtRelayCtlContext {
 
 
         if let Some(state) = self.wait_list.join_pre.clone() {
+
             if state.wait_timer.is_timeout() {
                 match state.inner {
-                    WaitStateKind::JOIN_PRE((_, _, _)) => {
-                        // only estb nodes will accept join request and enter this state
-                        self.state = MlbtState::ESTB;
+                    WaitStateKind::JOIN_PRE((src, waitfor, _)) => {
+                        // as if is rejected
+                        self.join_pre_cb(route_ctl, &src, &waitfor, None, false);
                     }
                     _ => {unreachable!()}
                 }
@@ -254,7 +252,12 @@ impl MlbtRelayCtlContext {
     }
 
 
-    // todo use macro to be generic 
+    // todo: use macro to be generic over WaitStateKind
+    // helper func to check wait list
+
+
+    // is in join_wait state, n.b. timeout has been checked several lines ago
+    // thus we do not check it again 
     fn is_join_wait(&self) -> Option<(Peer, Peer, u64)> {
         match self.wait_list.join_wait.clone() {
             Some(state) => {
@@ -270,27 +273,40 @@ impl MlbtRelayCtlContext {
     }
 
 
-    fn join_callback(&mut self, route_ctl: &mut RouteTable, sender: &Peer, msg: &RelayCtlMessage)
-        -> Vec<(Peer, RelayCtlMessage)>     
+    fn is_join_pre(&self) -> Option<(Peer, Peer, u64)> {
+        match self.wait_list.join_pre.clone() {
+            Some(state) => {
+                if let WaitStateKind::JOIN_PRE(s) = state.inner {
+                    Some(s)
+                }
+                else {
+                    unreachable!()
+                }
+            }
+            None => None
+        }
+    }
+
+
+    // recv a join request
+    fn join_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer, msg: &RelayCtlMessage)
+        -> Option<(Peer, RelayCtlMessage)>     
     {
-        let mut ret: Vec<(Peer, RelayCtlMessage)> = vec![];
-        
         let join_msg = RelayMsgJoin::from_bytes(&msg.payload());
         if join_msg.is_err() {
             warn!("MlbtRelayCtlContext::join_callback parse RelayMsgJoin failed: {}",
                 join_msg.unwrap_err());
             // ignore ill-formed messages
-            return ret; 
+            return None; 
         }
         let join_msg = join_msg.unwrap();
 
         // already have too many links, reject new ones
         if route_ctl.get_relay_count() >= RouteTable::MAX_LINK {
-            ret.push((
+            return Some((
                 sender.to_owned(),
                 msg.reject(self.seq())
             ));
-            return ret; 
         }
 
         // accept it
@@ -299,9 +315,11 @@ impl MlbtRelayCtlContext {
             MlbtState::ESTB => {
             
                 if self.is_waiting() {
+
+                    // waiting for sender, one with bigger peer id accepts
+                    // todo!(ack message can be skipped since recv a join req
+                    // itself means has send capability and join intention)
                     if let Some((_, cand, _)) = self.is_join_wait() {
-   
-                        // waiting for sender, one with bigger peer id accepts
                         if cand == *sender && route_ctl.local_id() > *sender {
 
                             let ack = msg.accept(self.seq());
@@ -309,22 +327,19 @@ impl MlbtRelayCtlContext {
                             self.wait_list.join_wait = None;
                             self.wait_list.join_pre = Some(WaitState::join_pre_timer(
                                 &join_msg.src(), sender, ack.msg_id()));
-
-                            ret.push((
+                            
+                            return Some((
                                 sender.to_owned(),
                                 ack
                             ));
-
-                            // return early
-                            return ret;
                         }
                     }
-                    // reject other join requests
-                    ret.push((
+
+                    // reject in other circumstances
+                    return Some((
                         sender.to_owned(),
                         msg.reject(self.seq())
                     ));
-                    return ret;
                 }
 
                 // is a working node and state is clear, accept
@@ -333,7 +348,7 @@ impl MlbtRelayCtlContext {
                 self.wait_list.join_wait =  Some(WaitState::join_pre_timer(
                     &join_msg.src(), sender, ack.msg_id()));
 
-                ret.push((
+                return Some((
                     sender.to_owned(),
                     msg.accept(self.seq())
                 ));
@@ -341,19 +356,23 @@ impl MlbtRelayCtlContext {
 
             MlbtState::IDLE | MlbtState::INIT | MlbtState::WAIT => {
                 // not ready to be subscribed, reject
-                ret.push((
+                return Some((
                     sender.to_owned(),
                     msg.reject(self.seq())
                 ));
             }
         }
-        ret
     }
 
 
-    fn join(&mut self, target: &Peer, src: &Peer) -> Vec<(Peer, RelayCtlMessage)> {
+    // form a join request
+    fn join(&mut self, target: &Peer, src: &Peer) -> Option<(Peer, RelayCtlMessage)> {
         
-        let mut ret: Vec<(Peer, RelayCtlMessage)> = vec![];
+        if self.is_join_pre().is_some() || self.is_join_wait().is_some() {
+            // do not allow 
+            return None;
+        }
+
         let req_seq = self.seq();
 
         // log the time a join quest is made
@@ -362,77 +381,97 @@ impl MlbtRelayCtlContext {
             WaitState::join_wait_timer(src, target, req_seq)
         );
 
-        ret.push((
+        Some((
             target.to_owned(),
             RelayCtlMessage::new(
                 RelayMsgKind::JOIN,
                 req_seq,
                 RelayMsgJoin::new(src)
             )
-        ));
-
-        ret
+        ))
     }
 
 
     // handle incoming reply to a prev join msg
-    fn join_pending(&mut self, route_ctl: &mut RouteTable,
-         src: &Peer, waitfor: &Peer, msg_id: Option<u64>) -> Vec<(Peer, RelayCtlMessage)> 
+    // it is ensured that the reply id matches what stores in wait_list
+    //
+    // src: related tree src
+    // waitfor: remote peer
+    // incoming_id: id of the related join request msg, None if timeout
+    // bool: accept/reject
+    fn join_wait_cb(&mut self, route_ctl: &mut RouteTable, src: &Peer, waitfor: &Peer,
+        incoming_id: Option<u64>, accepted: bool) -> Option<(Peer, RelayCtlMessage)>
     {
-        
-        let mut ret: Vec<(Peer, RelayCtlMessage)> = vec![];
 
-        match msg_id {
+        // anyway, the timer should be cleared
+        self.wait_list.join_wait = None;
 
-            // accepted
-            Some(id) => {
-                
-                // done for requiring side
-                route_ctl.reg_delegate(src, waitfor);
-                debug!("subscribed: {} through {}", src, waitfor);
+        if incoming_id.is_none() {
+            // timeout
 
-                // notify receiving side to start relaying
-                ret.push((
-                    waitfor.to_owned(),
-                    RelayCtlMessage::new(
-                        RelayMsgKind::ACCEPT, 
-                        self.seq(), 
-                        RelayMsgAccept::from_id(id)
-                    )
-                ));
-            }
+            // todo: timeout cb
 
-            // rejected
-            None => {
-
-            }
+            // do not need to send anything
+            return None;
         }
-        ret
+
+        if accepted {
+            // done for requiring side
+            route_ctl.reg_delegate(src, waitfor);
+            debug!("subscribed: {} through {}", src, waitfor);
+
+            // notify receiving side to start relaying
+            return Some((
+                waitfor.to_owned(),
+                RelayCtlMessage::new(
+                    RelayMsgKind::ACCEPT, 
+                    self.seq(), 
+                    RelayMsgAccept::from_id(incoming_id.unwrap()) // safe unwrap
+                )
+            ));
+        }
+
+        // rejected
+        // todo: rejected cb
+        None
     }
 
 
-    fn join_ack_pending(&mut self, route_ctl: &mut RouteTable,
-        src: &Peer, waitfor: &Peer, msg_id: Option<u64>) -> Vec<(Peer, RelayCtlMessage)>
+    // handle incoming reply for join accept
+    // do not reply in any circumstances
+    //
+    // src: related tree src
+    // waitfor: remote peer
+    // incoming_id: id of the related join request msg, None if timeout
+    // bool: accept/reject
+    fn join_pre_cb(&mut self, route_ctl: &mut RouteTable, src: &Peer,
+         waitfor: &Peer, incoming_id: Option<u64>, accepted: bool)
     {
-        todo!()
+
+        // anyway, the timer should be cleared
+        self.wait_list.join_pre = None;
+
+        if incoming_id.is_none() {
+            // todo: timeout cb
+            return;
+        }
+
+        if accepted {
+            route_ctl.insert_relay(src, waitfor);
+            return;
+        }
+
+        // rejected
+        // todo rejected cb
     }
 
 
-    fn leave_callback(&mut self, route_ctl: &mut RouteTable, sender: &Peer, msg: &RelayCtlMessage)
-        -> Vec<(Peer, RelayCtlMessage)> 
+    // received a leave request
+    fn leave_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer, msg: &RelayCtlMessage)
     {
-        let mut ret: Vec<(Peer, RelayCtlMessage)> = vec![];
-        
         match RelayMsgLeave::from_bytes(&msg.payload()) {
             Ok(leave_msg) => {
-
                 route_ctl.remove_relay(&leave_msg.src(), sender);
-
-                // acknowledge relay entry has been removed (todo: make this optional)
-                ret.push((
-                    sender.to_owned(),
-                    msg.accept(self.seq())
-                ));
             }
 
             Err(error) => {
@@ -440,35 +479,77 @@ impl MlbtRelayCtlContext {
                 // ignore ill-formed messages 
             }
         }
-        
-        ret
     }
 
 
-    fn accept_dispatcher(&mut self, msg: &RelayCtlMessage)  {
+    // dispatch accept/reject msg to its cb according to the ack msg_id
+    // return value is defined as a vec in case some cb may send several messages
+    fn decision_dispatcher(&mut self, route_ctl: &mut RouteTable,
+         msg: &RelayCtlMessage, pos: bool) -> Vec<(Peer, RelayCtlMessage)>
+    {
+        
+        let mut ret: Vec<(Peer, RelayCtlMessage)> = vec![];
 
-        if let Some((src, waitfor, id)) = self.is_join_wait() {
-            
-            let acp_msg_id = msg.msg_id();
-            
+        // first decode the message
+
+        let incoming_msg_id = msg.msg_id();
+        let decision_msg_ack: u64;
+
+        if pos {
             match RelayMsgAccept::from_bytes(&msg.payload()) {
-                Ok(accept_msg) => {
-                    
-                    // everything is in-order
-                    if accept_msg.ack() == id {
-                    }
-                
+                Ok(msg) => {
+                    decision_msg_ack = msg.ack();
                 }
                 Err(error) => {
-                    warn!("MlbtRelayCtlContext::accept_dispatcher\
-                        Failed to parse RelayMsgAccept {}", error)
+                    warn!("MlbtRelayCtlContext::decision_dispatcher\
+                        Failed to parse RelayMsgAccept {}", error);
+                    return ret;
                 }
             }
-            return;
+        }
+        else {
+            match RelayMsgReject::from_bytes(&msg.payload()) {
+                Ok(msg) => {
+                    decision_msg_ack = msg.ack();
+                }
+                Err(error) => {
+                    warn!("MlbtRelayCtlContext::decision_dispatcher\
+                        Failed to parse RelayMsgReject {}", error);
+                    return ret;
+                }
+            }
+        }
+
+        // check all pending wait linearly (and return early), if none of them matches
+        // it may be ill-formed
+
+        if let Some((src, waitfor, id)) = self.is_join_wait() {
+            if decision_msg_ack == id {
+
+                let reply = self.join_wait_cb(
+                    route_ctl, &src, &waitfor, Some(incoming_msg_id), pos);
+                
+                if reply.is_some() {
+                    ret.push(reply.unwrap());
+                }
+                
+                return ret;
+            }
+        }
+
+
+        if let Some((src, waitfor, id)) = self.is_join_pre() {
+            if decision_msg_ack == id {
+
+                self.join_pre_cb(route_ctl, &src, &waitfor, 
+                    Some(incoming_msg_id), pos);
+                return ret;
+            }
         }
         
         warn!("MlbtRelayCtlContext::accept_dispatcher \
-            Unmatched accept message: {:?}", msg);                
+            Unmatched accept message: {:?}", msg);
+        return ret;                
     }
-    
+
 }
