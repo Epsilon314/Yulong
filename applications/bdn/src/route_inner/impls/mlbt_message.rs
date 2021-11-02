@@ -3,7 +3,11 @@ use std::convert::TryInto;
 use log::warn;
 use prost_types;
 use prost::Message;
-use crate::bdn_message::MlbtMessage;
+use crate::bdn_message::{
+    MlbtMessage,
+    MlbtMerge,
+    MlbtMergeCheck,
+};
 
 use yulong::utils::AsBytes;
 use yulong::error::{DumbError, SerializeError, DeserializeError};
@@ -264,6 +268,110 @@ impl RelayMsgReject {
     pub fn ack(&self) -> u64 {self.ack}
 }
 
+
+pub struct RelayMsgMerge {
+    weight: f32,
+    merge_thrd: f32,
+}
+
+
+impl AsBytes for RelayMsgMerge {
+
+    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
+        let protobuf_msg = MlbtMerge {
+            weight: self.weight,
+            thrd: self.merge_thrd,
+        };
+
+        let protobuf_bytes_len = protobuf_msg.encoded_len();
+        let mut protobuf_buf: Vec<u8> = Vec::with_capacity(protobuf_bytes_len);
+        match protobuf_msg.encode(&mut protobuf_buf) {
+            Ok(_) => {
+                Ok(protobuf_buf)
+            }
+
+            Err(error) => {
+                Err(SerializeError::new(
+                    "RelayMsgMerge::into_bytes",
+                    error
+                ))
+            }
+        }
+
+    }
+
+
+    fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
+        match MlbtMerge::decode(buf) {
+            Ok(msg) => {
+                Ok(Self{
+                    weight: msg.weight,
+                    merge_thrd: msg.thrd
+                })
+            }
+
+            Err(error) => {
+                Err(DeserializeError::new("RelayMsgMerge::from_bytes", error))
+            }
+        }
+    }
+
+}
+
+
+impl RelayMsgMerge {
+    fn new(weight: f32, merge_thrd: f32) -> Self {
+        Self {
+            weight,
+            merge_thrd,
+        }
+    }
+}
+
+
+pub struct RelayMsgMergeCheck {
+    weight: f32,
+}
+
+
+impl AsBytes for RelayMsgMergeCheck {
+
+    // todo: write some protobuf helper to shorten this repeated pattern
+    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
+        let protobuf_msg = MlbtMergeCheck {
+            weight: self.weight
+        };
+
+        let protobuf_bytes_len = protobuf_msg.encoded_len();
+        let mut protobuf_buf: Vec<u8> = Vec::with_capacity(protobuf_bytes_len);
+        match protobuf_msg.encode(&mut protobuf_buf) {
+            Ok(_) => {
+                Ok(protobuf_buf)
+            }
+
+            Err(error) => {
+                Err(SerializeError::new(
+                    "RelayMsgMergeCheck::into_bytes",
+                    error
+                ))
+            }
+        }
+    }
+
+
+    fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
+        todo!()
+    }
+}
+
+
+impl RelayMsgMergeCheck {
+    fn new(weight: f32) -> Self {
+        Self {
+            weight
+        }
+    }
+}
 
 
 #[cfg(test)]

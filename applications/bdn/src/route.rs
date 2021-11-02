@@ -5,12 +5,16 @@ use yulong_network::{identity::Peer};
 use std::hash::Hash;
 use std::{collections::HashMap, fmt::Debug};
 
+use async_trait::async_trait;
+
 use crate::msg_header::{MsgHeader, MsgType, MsgTypeKind, RelayMethodKind};
 
 use crate::{
     common::MessageWithIp,
     message::OverlayMessage,
     route_inner::RelayCtl,
+    measure::NetStat,
+    measure::NetPref,
 };
 
 /// Application-layer route user interface, query only
@@ -52,6 +56,8 @@ pub struct Route<R: RelayCtl> {
     route_table: RouteTable,
 
     relay_mod: R,
+
+    netstat: NetStat,
 }
 
 pub struct RouteTable {
@@ -107,6 +113,8 @@ impl<R: RelayCtl> Route<R> {
             route_table: RouteTable::new(local),
 
             relay_mod: R::new(),
+
+            netstat: NetStat::new(),
         }
     }
 
@@ -367,6 +375,32 @@ impl<R: RelayCtl> AppLayerRouteInner for Route<R> {
 
     fn reg_delegate(&mut self, src: &Self::Host, del: &Self::Host) {
         self.route_table.reg_delegate(src, del)
+    }
+}
+
+
+// wrap it for calling convenient
+
+#[async_trait]
+impl<R: RelayCtl> NetPref for Route<R> {
+
+    fn latency(&self, to: &Peer) -> f32 {
+        self.netstat.latency(to)
+    }
+
+
+    fn bandwidth(&self, to: &Peer) -> f32 {
+        self.netstat.bandwidth(to)
+    }
+
+
+    async fn update(&mut self, target: &Peer) {
+        self.netstat.update(target).await;
+    }
+
+
+    async fn update_all(&mut self) {
+        self.netstat.update_all().await;
     }
 }
 

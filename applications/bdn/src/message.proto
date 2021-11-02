@@ -19,3 +19,12 @@ message mlbt_message {
 
     bytes payload = 3;
 }
+
+message mlbt_merge {
+    float weight = 1;
+    float thrd = 2;
+}
+
+message mlbt_merge_check {
+    float weight = 1;
+}

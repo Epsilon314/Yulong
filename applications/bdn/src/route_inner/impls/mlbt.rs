@@ -6,6 +6,7 @@ use crate::route_inner::RelayCtl;
 use crate::route::RouteTable;
 use crate::route::AppLayerRouteInner;
 use crate::route_inner::impls::mlbt_message::RelayMsgKind;
+use crate::route_inner::impls::mlbt_stat::MlbtStat;
 
 use log::debug;
 use log::warn;
@@ -23,6 +24,8 @@ pub struct MlbtRelayCtlContext {
     local_id: u64,
 
     wait_list: WaitList,
+
+    mlbt_stat: MlbtStat,
 }
 
 
@@ -97,6 +100,8 @@ impl RelayCtl for MlbtRelayCtlContext {
             state: MlbtState::IDLE,
 
             wait_list: WaitList::new(),
+
+            mlbt_stat: MlbtStat::new(),
         }
     }
 
@@ -550,6 +555,17 @@ impl MlbtRelayCtlContext {
         warn!("MlbtRelayCtlContext::accept_dispatcher \
             Unmatched accept message: {:?}", msg);
         return ret;                
+    }
+
+
+    //fn join(&mut self, target: &Peer, src: &Peer)
+
+    fn merge(&mut self, target: &Peer) -> Option<(Peer, RelayCtlMessage)> {
+        
+        
+
+
+        None
     }
 
 }
