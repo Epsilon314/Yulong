@@ -3,7 +3,11 @@ use std::convert::TryInto;
 use log::warn;
 use prost_types;
 use prost::Message;
-use crate::bdn_message::MlbtMessage;
+use crate::bdn_message::{
+    MlbtMessage,
+    MlbtMerge,
+    MlbtMergeCheck,
+};
 
 use yulong::utils::AsBytes;
 use yulong::error::{DumbError, SerializeError, DeserializeError};
@@ -11,7 +15,7 @@ use yulong_network::identity::Peer;
 
 use num_traits::{FromPrimitive, ToPrimitive};
 
-#[derive(FromPrimitive, ToPrimitive, Clone, Copy)]
+#[derive(FromPrimitive, ToPrimitive, Clone, Copy, Debug)]
 pub enum RelayMsgKind {
     JOIN = 0,
     LEAVE = 1,
@@ -19,6 +23,8 @@ pub enum RelayMsgKind {
     REJECT = 3,
 }
 
+
+#[derive(Debug)]
 pub struct RelayCtlMessage {
     msg_type: RelayMsgKind,
     msg_id: u64,
@@ -129,7 +135,7 @@ impl RelayCtlMessage {
 
 // join message only need to specify the broadcast tree to join by 
 // including its src id
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RelayMsgJoin {
     src: Peer
 }
@@ -222,6 +228,12 @@ impl RelayMsgAccept {
     pub fn from_id(id: u64) -> Self {
         Self{ack: id}
     }
+
+
+    pub fn ack(&self) -> u64 {
+        self.ack
+    }
+
 }
 
 
@@ -252,4 +264,147 @@ impl RelayMsgReject {
     pub fn new(income: &RelayCtlMessage) -> Self {
         Self{ack: income.msg_id}
     }
+
+    pub fn ack(&self) -> u64 {self.ack}
+}
+
+
+pub struct RelayMsgMerge {
+    weight: f32,
+    merge_thrd: f32,
+}
+
+
+impl AsBytes for RelayMsgMerge {
+
+    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
+        let protobuf_msg = MlbtMerge {
+            weight: self.weight,
+            thrd: self.merge_thrd,
+        };
+
+        let protobuf_bytes_len = protobuf_msg.encoded_len();
+        let mut protobuf_buf: Vec<u8> = Vec::with_capacity(protobuf_bytes_len);
+        match protobuf_msg.encode(&mut protobuf_buf) {
+            Ok(_) => {
+                Ok(protobuf_buf)
+            }
+
+            Err(error) => {
+                Err(SerializeError::new(
+                    "RelayMsgMerge::into_bytes",
+                    error
+                ))
+            }
+        }
+
+    }
+
+
+    fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
+        match MlbtMerge::decode(buf) {
+            Ok(msg) => {
+                Ok(Self{
+                    weight: msg.weight,
+                    merge_thrd: msg.thrd
+                })
+            }
+
+            Err(error) => {
+                Err(DeserializeError::new("RelayMsgMerge::from_bytes", error))
+            }
+        }
+    }
+
+}
+
+
+impl RelayMsgMerge {
+    fn new(weight: f32, merge_thrd: f32) -> Self {
+        Self {
+            weight,
+            merge_thrd,
+        }
+    }
+}
+
+
+pub struct RelayMsgMergeCheck {
+    weight: f32,
+}
+
+
+impl AsBytes for RelayMsgMergeCheck {
+
+    // todo: write some protobuf helper to shorten this repeated pattern
+    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
+        let protobuf_msg = MlbtMergeCheck {
+            weight: self.weight
+        };
+
+        let protobuf_bytes_len = protobuf_msg.encoded_len();
+        let mut protobuf_buf: Vec<u8> = Vec::with_capacity(protobuf_bytes_len);
+        match protobuf_msg.encode(&mut protobuf_buf) {
+            Ok(_) => {
+                Ok(protobuf_buf)
+            }
+
+            Err(error) => {
+                Err(SerializeError::new(
+                    "RelayMsgMergeCheck::into_bytes",
+                    error
+                ))
+            }
+        }
+    }
+
+
+    fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
+        todo!()
+    }
+}
+
+
+impl RelayMsgMergeCheck {
+    fn new(weight: f32) -> Self {
+        Self {
+            weight
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod test {
+
+    use log::debug;
+
+    use super::*;
+
+
+    #[test]
+    fn ctl_msg_serde() {
+
+        let peer = Peer::from_random();
+
+        let payload = RelayMsgJoin::new(&peer);
+
+        let msg = RelayCtlMessage::new(
+            RelayMsgKind::JOIN,
+            15514,
+            payload.clone()
+        );
+
+        let buf = msg.into_bytes().unwrap();
+        debug!("Serialized Message: {:?}", buf);
+
+        let de_msg = RelayCtlMessage::from_bytes(&buf).unwrap();
+
+        assert!(matches!(de_msg.msg_type(), RelayMsgKind::JOIN));
+        assert_eq!(de_msg.msg_id(), 15514);
+        assert_eq!(de_msg.payload(), payload.into_bytes().unwrap());
+    }
+
+
+
 }
