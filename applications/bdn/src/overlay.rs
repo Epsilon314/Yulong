@@ -377,6 +377,10 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
                 async_std::task::block_on(
                     self.send_to(&next_node, &mut incoming_msg));
             }
+
+            // todo: now send_to intercept all errors so we cannot pass on send failures
+            // to route module
+            self.route.relay_receipt(true);
         }
     }
 

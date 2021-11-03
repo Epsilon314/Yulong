@@ -21,6 +21,7 @@ pub enum RelayMsgKind {
     LEAVE = 1,
     ACCEPT = 2,
     REJECT = 3,
+    MERGE = 4,
 }
 
 
@@ -269,9 +270,10 @@ impl RelayMsgReject {
 }
 
 
+#[derive(Debug)]
 pub struct RelayMsgMerge {
-    weight: f32,
-    merge_thrd: f32,
+    weight: u64,
+    merge_thrd: u64,
 }
 
 
@@ -320,17 +322,29 @@ impl AsBytes for RelayMsgMerge {
 
 
 impl RelayMsgMerge {
-    fn new(weight: f32, merge_thrd: f32) -> Self {
+
+    pub fn new(weight: u64, merge_thrd: u64) -> Self {
         Self {
             weight,
             merge_thrd,
         }
     }
+
+    
+    pub fn weight(&self) -> u64 {
+        self.weight
+    }
+
+
+    pub fn merge_thrd(&self) -> u64 {
+        self.merge_thrd
+    }
+
 }
 
 
 pub struct RelayMsgMergeCheck {
-    weight: f32,
+    weight: u64,
 }
 
 
@@ -360,13 +374,23 @@ impl AsBytes for RelayMsgMergeCheck {
 
 
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
-        todo!()
+        match MlbtMergeCheck::decode(buf) {
+            Ok(msg) => {
+                Ok(Self{
+                    weight: msg.weight,
+                })
+            }
+
+            Err(error) => {
+                Err(DeserializeError::new("RelayMsgMergeCheck::from_bytes", error))
+            }
+        }
     }
 }
 
 
 impl RelayMsgMergeCheck {
-    fn new(weight: f32) -> Self {
+    pub fn new(weight: u64) -> Self {
         Self {
             weight
         }
@@ -404,7 +428,5 @@ mod test {
         assert_eq!(de_msg.msg_id(), 15514);
         assert_eq!(de_msg.payload(), payload.into_bytes().unwrap());
     }
-
-
 
 }

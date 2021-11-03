@@ -184,6 +184,11 @@ impl<R: RelayCtl> Route<R> {
         ret
     }
 
+
+    pub fn relay_receipt(&mut self, all_success: bool) {
+        self.relay_mod.relay_receipt(&mut self.route_table, all_success);
+    }
+
 }
 
 

@@ -20,7 +20,9 @@ pub trait RelayCtl: Send {
 
     fn relay_ctl_callback(&mut self, route_ctl: &mut RouteTable, sender: &Peer, msg: &[u8])
         -> Vec<(Peer, Vec<u8>)>;
-
+    
+    // call after finish send list
+    fn relay_receipt(&mut self, route_ctl: &mut RouteTable, all_success: bool);
 }
 
 
