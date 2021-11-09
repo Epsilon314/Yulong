@@ -184,15 +184,19 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
     }
 
 
-    // todo!
-    // rename it to something like  and impl a true broadcast
-    pub async fn broadcast(&mut self, src: &Peer, msg: &mut message::OverlayMessage) {
+    pub async fn relay_on(&mut self, src: &Peer, msg: &mut message::OverlayMessage) {
 
         let relay_list = self.route.get_relay(&src);
 
         for peer in relay_list {
             self.send_to(&peer, msg).await
         }
+    }
+
+
+    // todo
+    pub async fn broadcast(&mut self, msg: &mut message::OverlayMessage) {
+        // get src and broadcast
     }
 
 
@@ -377,6 +381,10 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
                 async_std::task::block_on(
                     self.send_to(&next_node, &mut incoming_msg));
             }
+
+            // todo: now send_to intercept all errors so we cannot pass on send failures
+            // to route module
+            self.route.relay_receipt(true);
         }
     }
 

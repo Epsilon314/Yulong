@@ -1,3 +1,5 @@
+#![feature(binary_heap_retain)]
+
 #[macro_use]
 extern crate num_derive;
 

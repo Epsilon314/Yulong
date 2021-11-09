@@ -21,10 +21,11 @@ message mlbt_message {
 }
 
 message mlbt_merge {
-    float weight = 1;
-    float thrd = 2;
+    uint64 weight = 1;
+    uint64 thrd = 2;
+    bytes src_id = 3;
 }
 
 message mlbt_merge_check {
-    float weight = 1;
+    uint64 weight = 1;
 }

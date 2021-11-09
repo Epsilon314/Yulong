@@ -21,6 +21,7 @@ pub enum RelayMsgKind {
     LEAVE = 1,
     ACCEPT = 2,
     REJECT = 3,
+    MERGE = 4,
 }
 
 
@@ -269,9 +270,11 @@ impl RelayMsgReject {
 }
 
 
+#[derive(Debug)]
 pub struct RelayMsgMerge {
-    weight: f32,
-    merge_thrd: f32,
+    weight: u64,
+    merge_thrd: u64,
+    src: Peer,
 }
 
 
@@ -281,6 +284,7 @@ impl AsBytes for RelayMsgMerge {
         let protobuf_msg = MlbtMerge {
             weight: self.weight,
             thrd: self.merge_thrd,
+            src_id: self.src.get_id().to_vec(),
         };
 
         let protobuf_bytes_len = protobuf_msg.encoded_len();
@@ -304,10 +308,19 @@ impl AsBytes for RelayMsgMerge {
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
         match MlbtMerge::decode(buf) {
             Ok(msg) => {
+                let peer = Peer::try_from_id(&msg.src_id);
+                if peer.is_err() {
+                    return Err(DeserializeError::new(
+                        "RelayMsgMerge::from_bytes", 
+                        peer.unwrap_err()));
+                }
+
                 Ok(Self{
                     weight: msg.weight,
-                    merge_thrd: msg.thrd
+                    merge_thrd: msg.thrd,
+                    src: peer.unwrap()
                 })
+
             }
 
             Err(error) => {
@@ -320,17 +333,35 @@ impl AsBytes for RelayMsgMerge {
 
 
 impl RelayMsgMerge {
-    fn new(weight: f32, merge_thrd: f32) -> Self {
+
+    pub fn new(weight: u64, merge_thrd: u64, src: &Peer) -> Self {
         Self {
             weight,
             merge_thrd,
+            src: src.to_owned(),
         }
     }
+
+    
+    pub fn weight(&self) -> u64 {
+        self.weight
+    }
+
+
+    pub fn merge_thrd(&self) -> u64 {
+        self.merge_thrd
+    }
+
+
+    pub fn src(&self) -> Peer {
+        self.src.clone()
+    }
+
 }
 
 
 pub struct RelayMsgMergeCheck {
-    weight: f32,
+    weight: u64,
 }
 
 
@@ -360,13 +391,23 @@ impl AsBytes for RelayMsgMergeCheck {
 
 
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
-        todo!()
+        match MlbtMergeCheck::decode(buf) {
+            Ok(msg) => {
+                Ok(Self{
+                    weight: msg.weight,
+                })
+            }
+
+            Err(error) => {
+                Err(DeserializeError::new("RelayMsgMergeCheck::from_bytes", error))
+            }
+        }
     }
 }
 
 
 impl RelayMsgMergeCheck {
-    fn new(weight: f32) -> Self {
+    pub fn new(weight: u64) -> Self {
         Self {
             weight
         }
@@ -404,7 +445,5 @@ mod test {
         assert_eq!(de_msg.msg_id(), 15514);
         assert_eq!(de_msg.payload(), payload.into_bytes().unwrap());
     }
-
-
 
 }
