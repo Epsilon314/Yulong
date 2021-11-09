@@ -274,6 +274,7 @@ impl RelayMsgReject {
 pub struct RelayMsgMerge {
     weight: u64,
     merge_thrd: u64,
+    src: Peer,
 }
 
 
@@ -283,6 +284,7 @@ impl AsBytes for RelayMsgMerge {
         let protobuf_msg = MlbtMerge {
             weight: self.weight,
             thrd: self.merge_thrd,
+            src_id: self.src.get_id().to_vec(),
         };
 
         let protobuf_bytes_len = protobuf_msg.encoded_len();
@@ -306,10 +308,19 @@ impl AsBytes for RelayMsgMerge {
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
         match MlbtMerge::decode(buf) {
             Ok(msg) => {
+                let peer = Peer::try_from_id(&msg.src_id);
+                if peer.is_err() {
+                    return Err(DeserializeError::new(
+                        "RelayMsgMerge::from_bytes", 
+                        peer.unwrap_err()));
+                }
+
                 Ok(Self{
                     weight: msg.weight,
-                    merge_thrd: msg.thrd
+                    merge_thrd: msg.thrd,
+                    src: peer.unwrap()
                 })
+
             }
 
             Err(error) => {
@@ -323,10 +334,11 @@ impl AsBytes for RelayMsgMerge {
 
 impl RelayMsgMerge {
 
-    pub fn new(weight: u64, merge_thrd: u64) -> Self {
+    pub fn new(weight: u64, merge_thrd: u64, src: &Peer) -> Self {
         Self {
             weight,
             merge_thrd,
+            src: src.to_owned(),
         }
     }
 
@@ -338,6 +350,11 @@ impl RelayMsgMerge {
 
     pub fn merge_thrd(&self) -> u64 {
         self.merge_thrd
+    }
+
+
+    pub fn src(&self) -> Peer {
+        self.src.clone()
     }
 
 }

@@ -59,6 +59,12 @@ impl RelayCtl for MlbtRelayCtlContext {
         }
     }
 
+
+    fn get_relay_method(&self) -> RelayMethodKind {
+        RelayMethodKind::LOOKUP_TABLE_1
+    }
+
+
     fn bootstrap(&mut self, route_ctl: &mut RouteTable) -> Vec<(Peer, Vec<u8>)> {
         todo!()
     }
@@ -191,42 +197,6 @@ impl MlbtRelayCtlContext {
     }
 
 
-    // // todo: use macro to be generic over WaitStateKind
-    // // helper func to check wait list
-
-
-    // // is in join_wait state, n.b. timeout has been checked several lines ago
-    // // thus we do not check it again 
-    // fn is_join_wait(&self) -> Option<(Peer, Peer, u64)> {
-    //     match self.wait_list.join_wait.clone() {
-    //         Some(state) => {
-    //             if let WaitStateKind::JOIN_WAIT(s) = state.inner {
-    //                 Some(s)
-    //             }
-    //             else {
-    //                 unreachable!()
-    //             }
-    //         }
-    //         None => None
-    //     }
-    // }
-
-
-    // fn is_join_pre(&self) -> Option<(Peer, Peer, u64)> {
-    //     match self.wait_list.join_pre.clone() {
-    //         Some(state) => {
-    //             if let WaitStateKind::JOIN_PRE(s) = state.inner {
-    //                 Some(s)
-    //             }
-    //             else {
-    //                 unreachable!()
-    //             }
-    //         }
-    //         None => None
-    //     }
-    // }
-
-
     // form a join request
     fn join(&mut self, target: &Peer, src: &Peer) -> Option<(Peer, RelayCtlMessage)> {
     
@@ -314,7 +284,7 @@ impl MlbtRelayCtlContext {
 
                 Some((
                     sender.to_owned(),
-                    msg.accept(self.seq())
+                    ack
                 ))
             }
 
@@ -404,6 +374,7 @@ impl MlbtRelayCtlContext {
 
 
     // received a leave request
+    // do not need to ack leave
     fn leave_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer, msg: &RelayCtlMessage)
     {
         match RelayMsgLeave::from_bytes(&msg.payload()) {
@@ -483,6 +454,31 @@ impl MlbtRelayCtlContext {
                 return ret;
             }
         }
+
+
+        if let Some((src, waitfor, id)) = self.wait_list.get_merge_wait() {
+            if decision_msg_ack == id {
+                
+                let reply = self.merge_wait_cb(
+                    route_ctl, &src, &waitfor, Some(incoming_msg_id), pos);
+                
+                if reply.is_some() {
+                    ret.push(reply.unwrap());
+                }
+                return ret;
+            }
+        }
+
+
+        if let Some((src, waitfor, id)) = self.wait_list.get_merge_pre() {
+            if decision_msg_ack == id {
+
+                self.merge_pre_cb(route_ctl, &src, &waitfor, 
+                    Some(incoming_msg_id), pos);
+                return ret;
+            }
+        }
+
         
         warn!("MlbtRelayCtlContext::accept_dispatcher \
             Unmatched accept message: {:?}", msg);
@@ -491,19 +487,26 @@ impl MlbtRelayCtlContext {
 
 
     // require to merge
-    fn merge(&mut self, target: &Peer) -> Option<(Peer, RelayCtlMessage)> {
+    fn merge(&mut self, src: &Peer, target: &Peer) -> Option<(Peer, RelayCtlMessage)> {
 
         // todo
         if self.wait_list.is_waiting() {
             return None;
         }
 
+
+        let msg_seq = self.seq();
+
+        // set timer
+        self.wait_list.set_merge_wait(src, target, msg_seq);
+
         Some((target.to_owned(), RelayCtlMessage::new(
             RelayMsgKind::MERGE,
-            self.seq(),
+            msg_seq,
             RelayMsgMerge::new(
                 self.mlbt_stat.relay_inv(),
-                self.mlbt_stat.merge_thrd()
+                self.mlbt_stat.merge_thrd(),
+                src
             )
         )))
     }
@@ -547,7 +550,10 @@ impl MlbtRelayCtlContext {
 
         if !merge_cond {
             // rejected
-            
+            return Some((
+                sender.to_owned(),
+                msg.reject(self.seq())
+            ));
         }
 
         // can accept, check self state
@@ -556,7 +562,8 @@ impl MlbtRelayCtlContext {
             // node is trying to merge, will accept and pre for comfirmation
             MlbtState::INIT => {
                 
-                // todo! setup a timer
+                // todo!
+                self.wait_list.set_merge_pre(&merge_msg.src(), sender, msg.msg_id());
 
                 Some((
                     sender.to_owned(),
@@ -574,6 +581,75 @@ impl MlbtRelayCtlContext {
 
             }
 
+        }
+    }
+
+
+    // recv a merge request
+    fn merge_wait_cb(&mut self, route_ctl: &mut RouteTable, src: &Peer, waitfor: &Peer,
+        incoming_id: Option<u64>, accepted: bool) -> Option<(Peer, RelayCtlMessage)>
+    {
+
+        // anyway, the timer should be cleared
+        self.wait_list.clear_merge_wait();
+
+        if incoming_id.is_none() {
+            // timeout
+            // todo! timeout cb
+            return None;
+        }
+
+        if accepted {
+            
+            let ack_seq = self.seq();
+
+            // todo timer
+            self.wait_list.set_merge_pre(src, waitfor, ack_seq);
+
+            Some((
+                waitfor.to_owned(),
+                RelayCtlMessage::new(
+                    RelayMsgKind::ACCEPT, 
+                    ack_seq, 
+                    RelayMsgAccept::from_id(incoming_id.unwrap()) // safe unwrap
+                )
+            ))
+        }
+
+        else {
+            // rejected
+            // todo 
+            None
+        }
+    }
+
+
+    fn merge_pre_cb(&mut self, route_ctl: &mut RouteTable, src: &Peer,
+        waitfor: &Peer, incoming_id: Option<u64>, accepted: bool)
+    {
+        
+        // clear timer
+        self.wait_list.clear_merge_pre();
+
+        if incoming_id.is_none() {
+            // todo: timeout cb
+            
+            return;
+        }
+
+        if accepted {
+            // one with larger id become the new root
+            if route_ctl.local_id() > *waitfor {
+                // todo: whats more?
+                route_ctl.insert_front_relay(src, waitfor);
+            }
+            else {
+                self.state = MlbtState::WAIT;
+                route_ctl.reg_delegate(src, waitfor);
+            }
+        }
+        else {
+            // todo: rejected cb
         }
     }
 

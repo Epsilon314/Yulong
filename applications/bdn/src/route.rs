@@ -4,6 +4,8 @@ use yulong::utils::bidirct_hashmap::BidirctHashmap;
 use yulong_network::{identity::Peer};
 use std::hash::Hash;
 use std::{collections::HashMap, fmt::Debug};
+use std::collections::BinaryHeap;
+use std::net::SocketAddr;
 
 use async_trait::async_trait;
 
@@ -14,6 +16,7 @@ use crate::{
     message::OverlayMessage,
     route_inner::RelayCtl,
     measure::NetStat,
+    measure::NetStatDebug,
     measure::NetPref,
 };
 
@@ -23,6 +26,10 @@ pub trait AppLayerRouteUser {
     type Host: Clone + Debug;
 
     fn get_delegate(&self, src: &Self::Host) -> Option<Self::Host>;
+
+    fn get_best_src(&self) -> Option<Self::Host>;
+
+    fn get_src_list(&self) -> Vec<Self::Host>;
 
     fn get_next_hop(&self, dst: &Self::Host) -> Option<Self::Host>;
 
@@ -40,7 +47,13 @@ pub trait AppLayerRouteInner: AppLayerRouteUser {
 
     fn reg_delegate(&mut self, src: &Self::Host, del: &Self::Host);
 
+    fn insert_src(&mut self, src: &Self::Host, rtt: u64);
+
+    fn remove_src(&mut self, src: &Self::Host);
+
     fn insert_relay(&mut self, src: &Self::Host, to: &Self::Host);
+
+    fn insert_front_relay(&mut self, src: &Self::Host, to: &Self::Host);
 
     fn remove_relay(&mut self, src: &Self::Host, to: &Self::Host);
 
@@ -60,11 +73,43 @@ pub struct Route<R: RelayCtl> {
     netstat: NetStat,
 }
 
+
+#[derive(Clone)]
+struct PeerWithDis {
+    peer: Peer,
+    rtt: u64,   // ms
+}
+
+
+impl Eq for PeerWithDis {}
+
+impl PartialEq for PeerWithDis {
+    fn eq(&self, other: &Self) -> bool {
+        self.rtt == other.rtt
+    }
+}
+
+// reverse
+impl PartialOrd for PeerWithDis {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        other.rtt.partial_cmp(&self.rtt)
+    }
+}
+
+// reverse
+impl Ord for PeerWithDis {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.rtt.cmp(&self.rtt)
+    }
+}
+
 pub struct RouteTable {
 
     local_id: Peer,
 
     delegates: BidirctHashmap<Peer, Peer>,
+
+    roots: BinaryHeap<PeerWithDis>,
 
     // src -> [next] 
     relay_table: HashMap<Peer, Vec<Peer>>,
@@ -80,6 +125,7 @@ impl RouteTable {
 
     pub const MAX_LINK: u32 = 128;
 
+    // # of delegates
     const DEL_NUM: u32 = 1;
 
     pub fn new(local: &Peer) -> Self {
@@ -88,6 +134,8 @@ impl RouteTable {
             local_id: local.to_owned(),
 
             delegates: BidirctHashmap::new(),
+
+            roots: BinaryHeap::new(),
 
             // store the relay network
             relay_table: HashMap::new(),
@@ -209,7 +257,7 @@ impl AppLayerRouteUser for RouteTable {
     /// Get descendent peers to relay to
     fn get_relay(&self, src: &Self::Host) -> Vec<Self::Host> {
         match self.relay_table.get(src) {
-            Some(next_hops) => next_hops.to_vec(),
+            Some(next_hops) => next_hops.to_owned(),
             None => vec![],
         }
     }
@@ -219,7 +267,75 @@ impl AppLayerRouteUser for RouteTable {
         self.delegates.get_by_key(src).map(|p| p.to_owned())
     }
 
+    // todo unit test
+    fn get_best_src(&self) -> Option<Self::Host> {
+        // smallest
+        match self.roots.peek() {
+            Some(src) => Some(src.peer.to_owned()),
+            None => None
+        }
+    }
+
+
+    // todo unit test
+    fn get_src_list(&self) -> Vec<Self::Host> {
+        let mut res: Vec<Self::Host> = vec![];
+
+        // decreasing
+        for src in self.roots.clone().into_sorted_vec() {
+            res.insert(0, src.peer);
+        }
+        res
+    }
+
 }
+
+
+impl RouteTable {
+    fn _insert_relay_deque(&mut self, 
+        src: &<Self as AppLayerRouteUser>::Host,
+        to: &<Self as AppLayerRouteUser>::Host, front: bool) 
+    {
+        
+        self.relay_counter += 1;
+
+        match self.relay_table.get_mut(src) {
+            Some(handle) => {
+                if handle.contains(to) {
+                    warn!("Route::insert_relay already exists: {} -> {} ", src, to);
+                    self.relay_counter -= 1;
+                    return;
+                }
+                else if front {
+                    handle.insert(0, to.to_owned());
+                }
+                else {
+                    handle.push(to.to_owned());
+                }
+            }
+            None => {
+                self.relay_table.insert(
+                    src.to_owned(), 
+                    vec![to.to_owned()]
+                );
+            }
+        }
+
+
+        // todo: fix counter
+        match self.relay_ct_per_tree.get_mut(src) {
+            Some(ct_handle) => {
+                *ct_handle += 1;
+            }
+            None => {
+                self.relay_ct_per_tree.insert(src.to_owned(), 1);
+            }
+        }
+
+        debug!("Route::insert_relay {} -> {}", src, to);
+    }
+}
+
 
 impl AppLayerRouteInner for RouteTable {
     
@@ -246,40 +362,16 @@ impl AppLayerRouteInner for RouteTable {
 
     /// Insert more descendent peer
     fn insert_relay(&mut self, src: &Self::Host, to: &Self::Host) {
-        
-        self.relay_counter += 1;
 
-        match self.relay_table.get_mut(src) {
-            Some(handle) => {
-                if handle.contains(to) {
-                    warn!("Route::insert_relay already exists: {} -> {} ", src, to);
-                    self.relay_counter -= 1;
-                    return;
-                }
-                else {
-                    handle.push(to.to_owned());
-                }
-            }
-            None => {
-                self.relay_table.insert(
-                    src.to_owned(), 
-                    vec![to.to_owned()]
-                );
-            }
-        }
+        self._insert_relay_deque(src, to, false);
+
+    }
 
 
-        // todo: fix counter
-        match self.relay_ct_per_tree.get_mut(src) {
-            Some(ct_handle) => {
-                *ct_handle += 1;
-            }
-            None => {
-                self.relay_ct_per_tree.insert(src.to_owned(), 1);
-            }
-        }
+    fn insert_front_relay(&mut self, src: &Self::Host, to: &Self::Host) {
 
-        debug!("Route::insert_relay {} -> {}", src, to);
+        self._insert_relay_deque(src, to, true);
+
     }
 
 
@@ -333,8 +425,26 @@ impl AppLayerRouteInner for RouteTable {
             debug!("Route::reg_delegate register new delegate {} for {}", del, src);
         }
     }
+
+
+    fn insert_src(&mut self, src: &Self::Host, rtt: u64) {
+        self.roots.push(PeerWithDis{
+            peer: src.to_owned(),
+            rtt,
+        });
+    }
+
+
+    fn remove_src(&mut self, src: &Self::Host) {
+        self.roots.retain(|p| {
+            p.peer != *src
+        });
+    }
     
 }
+
+// wrap it for calling convenient
+// todo: rewrite deref to avoid these repeated code
 
 impl<R: RelayCtl> AppLayerRouteUser for Route<R> {
     type Host = Peer;
@@ -350,8 +460,17 @@ impl<R: RelayCtl> AppLayerRouteUser for Route<R> {
     fn get_delegate(&self, src: &Self::Host) -> Option<Self::Host> {
         self.route_table.get_delegate(src)
     }
+
+    fn get_best_src(&self) -> Option<Self::Host> {
+        self.route_table.get_best_src()
+    }
+
+    fn get_src_list(&self) -> Vec<Self::Host> {
+        self.route_table.get_src_list()
+    }
 }
 
+// wrap it for calling convenient
 
 impl<R: RelayCtl> AppLayerRouteInner for Route<R> {
     fn insert_path(&mut self, dst: &Self::Host, next: &Self::Host) {
@@ -364,6 +483,11 @@ impl<R: RelayCtl> AppLayerRouteInner for Route<R> {
 
     fn insert_relay(&mut self, src: &Self::Host, to: &Self::Host) {
         self.route_table.insert_relay(src, to)
+    }
+
+
+    fn insert_front_relay(&mut self, src: &Self::Host, to: &Self::Host) {
+        self.route_table.insert_front_relay(src, to)
     }
 
     fn remove_relay(&mut self, src: &Self::Host, to: &Self::Host) {
@@ -381,20 +505,27 @@ impl<R: RelayCtl> AppLayerRouteInner for Route<R> {
     fn reg_delegate(&mut self, src: &Self::Host, del: &Self::Host) {
         self.route_table.reg_delegate(src, del)
     }
+
+    fn insert_src(&mut self, src: &Self::Host, rtt: u64) {
+        self.route_table.insert_src(src, rtt)
+    }
+
+    fn remove_src(&mut self, src: &Self::Host) {
+        self.route_table.remove_src(src)
+    }
 }
 
 
 // wrap it for calling convenient
-
 #[async_trait]
 impl<R: RelayCtl> NetPref for Route<R> {
 
-    fn latency(&self, to: &Peer) -> f32 {
+    fn latency(&self, to: &Peer) -> Option<u64> {
         self.netstat.latency(to)
     }
 
 
-    fn bandwidth(&self, to: &Peer) -> f32 {
+    fn bandwidth(&self, to: &Peer) -> Option<u64> {
         self.netstat.bandwidth(to)
     }
 
@@ -406,6 +537,16 @@ impl<R: RelayCtl> NetPref for Route<R> {
 
     async fn update_all(&mut self) {
         self.netstat.update_all().await;
+    }
+}
+
+
+// wrap it for calling convenient
+impl<R: RelayCtl> NetStatDebug for Route<R> {
+    fn set(&mut self, target: &Peer, addr: Option<SocketAddr>,
+         lat: Option<u64>, bw: Option<u64>) 
+    {
+        self.netstat.set(target, addr, lat, bw)
     }
 }
 

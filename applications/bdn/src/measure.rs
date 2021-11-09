@@ -1,7 +1,8 @@
-use std::net::IpAddr;
+use std::net::SocketAddr;
 use std::collections::HashMap;
 use yulong_network::identity::Peer;
 use async_trait::async_trait;
+use log::warn;
 
 // test & update net stat
 // update all net stat
@@ -9,9 +10,9 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait NetPref {
 
-    fn latency(&self, to: &Peer) -> f32;
+    fn latency(&self, to: &Peer) -> Option<u64>;
 
-    fn bandwidth(&self, to: &Peer) -> f32;
+    fn bandwidth(&self, to: &Peer) -> Option<u64>;
 
     async fn update(&mut self, target: &Peer);
 
@@ -21,33 +22,57 @@ pub trait NetPref {
 
 // setup known netstat for test simplicity 
 pub trait NetStatDebug {
-    fn set(target: &Peer, lat: Option<f32>, bw: Option<f32>);
+    fn set(&mut self, target: &Peer, addr: Option<SocketAddr>, lat: Option<u64>, bw: Option<u64>);
 }
 
 
 #[derive(Clone, Copy)]
 struct NetStatEntry {
-    addr: IpAddr,
-    latency: f32,   // ms
-    bandwidth: f32, // Mbps
+    addr: SocketAddr,
+    latency: u64,   // ms
+    bandwidth: u64, // bps
 }
 
 
-#[derive(Clone, Copy)]
+impl NetStatEntry {
+    pub fn new(addr: SocketAddr) -> Self {
+        Self {
+            addr,
+            latency: 0,
+            bandwidth: 0,
+        }
+    }
+}
+
+
+#[derive(Clone)]
 pub struct NetStat {
+    stat_by_peer: HashMap<Peer, NetStatEntry>,
 }
 
 
 #[async_trait]
 impl NetPref for NetStat {
 
-    fn latency(&self, to: &Peer) -> f32 {
-        todo!()
+    fn latency(&self, to: &Peer) -> Option<u64> {
+        match self.stat_by_peer.get(to) {
+            Some(v) => Some(v.latency),
+            None => {
+                warn!("NetStat::latency Unknown peer {}", to);
+                None
+            }
+        }
     }
 
 
-    fn bandwidth(&self, to: &Peer) -> f32 {
-        todo!()
+    fn bandwidth(&self, to: &Peer) -> Option<u64> {
+        match self.stat_by_peer.get(to) {
+            Some(v) => Some(v.bandwidth),
+            None => {
+                warn!("NetStat::latency Unknown peer {}", to);
+                None
+            }
+        }
     }
 
 
@@ -65,8 +90,31 @@ impl NetPref for NetStat {
 
 impl NetStatDebug for NetStat {
 
-    fn set(target: &Peer, lat: Option<f32>, bw: Option<f32>) {
-        todo!()
+    fn set(&mut self, target: &Peer, addr: Option<SocketAddr>, lat: Option<u64>, bw: Option<u64>) {
+        
+        let mut handle = self.stat_by_peer.get_mut(target);
+        
+        if handle.is_none() {
+            if addr.is_none() {
+                return;
+            }
+            self.stat_by_peer.insert(
+                target.to_owned(), 
+                NetStatEntry::new(addr.unwrap())
+            );
+            handle = self.stat_by_peer.get_mut(target);
+        }
+
+        let handle = handle.unwrap();
+
+
+        if let Some(lat) = lat {
+            handle.latency = lat;
+        }
+
+        if let Some(bw) = bw {
+            handle.bandwidth = bw;
+        }
     }
 
 }
@@ -74,6 +122,8 @@ impl NetStatDebug for NetStat {
 
 impl NetStat {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            stat_by_peer: HashMap::new(),
+        }
     }
 }

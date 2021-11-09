@@ -3,6 +3,7 @@ pub mod impls;
 use crate::route::RouteTable;
 
 use yulong_network::identity::Peer;
+use crate::msg_header::RelayMethodKind;
 
 /// Relay method should provide a callback interface to handle its messages,
 /// and a bootstrap function to generate initial messages according to initial
@@ -12,6 +13,8 @@ use yulong_network::identity::Peer;
 pub trait RelayCtl: Send {
 
     fn new() -> Self;
+
+    fn get_relay_method(&self) -> RelayMethodKind;
 
     // will not modify RouteTable 
     fn heartbeat(&self, route_ctl: &RouteTable) -> Vec<(Peer, Vec<u8>)>;
