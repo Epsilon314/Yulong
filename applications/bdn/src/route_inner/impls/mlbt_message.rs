@@ -414,6 +414,10 @@ impl RelayMsgMergeCheck {
             weight
         }
     }
+
+    pub fn weight(&self) -> u64 {
+        self.weight
+    }
 }
 
 

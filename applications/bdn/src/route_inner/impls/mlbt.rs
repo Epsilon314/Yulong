@@ -752,7 +752,9 @@ impl MlbtRelayCtlContext {
 
 
     // for root only
-    fn merge_check_cb(sender: &Peer, msg: &RelayCtlMessage) -> Option<(Peer, RelayCtlMessage)> {
+    fn merge_check_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer, 
+        msg: &RelayCtlMessage) -> Option<(Peer, RelayCtlMessage)> 
+    {
 
         // decode merge request
         let merge_msg = RelayMsgMergeCheck::from_bytes(&msg.payload());
@@ -767,9 +769,38 @@ impl MlbtRelayCtlContext {
 
         // todo check self is src
 
-        // let w = merge_msg.weight()
+        match self.state {
+            MlbtState::INIT => {
+                let nw = merge_msg.weight();
+                let cw = self.mlbt_stat.relay_inv(&route_ctl.local_id());
 
-        None
+                if cw.is_none() {
+                    // either route table is wrong or remote message is wrong
+                    // ignore it
+                    return None;
+                }
+
+                if nw > cw.unwrap() {
+                    // reject
+                    Some((
+                        sender.to_owned(),
+                        msg.reject(self.seq())
+                    ))
+                }
+                else {
+                    // accept
+                    Some((
+                        sender.to_owned(),
+                        msg.accept(self.seq())
+                    ))
+                }
+            }
+
+            _ => {
+                // wrong state, ignore it
+                None
+            }
+        }
     }
 
 }
