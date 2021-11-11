@@ -1,84 +1,143 @@
+use std::collections::HashMap;
+
+use log::warn;
 use yulong_network::identity::Peer;
 use yulong::utils::CasualTimer;
 
 
 #[derive(Clone)]
-pub enum WaitStateKind {
+pub enum WaitStateData {
     JOIN_WAIT((Peer, Peer, u64)),   // src, waitfor, require msg id
     JOIN_PRE((Peer, Peer, u64)),   // src, subscriber, ack msg id
     MERGE_WAIT((Peer, Peer, u64)), // src, waitfor, ack msg id
     MERGE_PRE((Peer, Peer, u64)), // src, requirer, ack msg id
+    MERGE_CHECK((Peer, u64)), // src, require msg id
+}
+
+
+// only know type, do not known associated meta-data
+pub enum WaitStateType {
+    JOIN_WAIT,
+    JOIN_PRE,
+    MERGE_WAIT,
+    MERGE_PRE,
+    MERGE_CHECK,
+}
+
+static JOIN_WAIT_TO: u128 = 2000; // ms
+static JOIN_PRE_TO: u128 = 2000; // ms
+static MERGE_WAIT_TO: u128 = 2000; // ms
+static MERGE_PRE_TO: u128 = 2000; // ms
+static MERGE_CHECK_TO: u128 = 2000; // ms
+
+trait TimedStatesSingle {
+
+    // get associated data of a type if any
+    fn get(&self, state_type: WaitStateType) -> Option<WaitStateData>;
+
+    // get the data if it is timeout, get None elsewise
+    fn check(&self, state_type: WaitStateType) -> Option<WaitStateData>;
+
+    // set state data and start the timer now
+    fn set(&mut self, state: WaitStateData);
+
+    // clear the timed state by type
+    fn clear(&mut self, state_type: WaitStateType);
+
+    fn check_id(&self, id: u64) -> bool;
+
+}
+
+
+// TimedStatesSingle expect that indexed by root Peer
+// used as the interface
+pub trait TimedStates {
+
+    // get associated data of a type if any
+    fn get(&self, peer: &Peer, state_type: WaitStateType) -> Option<WaitStateData>;
+
+    // get the data if it is timeout, get None elsewise
+    fn check(&self, peer: &Peer, state_type: WaitStateType) -> Option<WaitStateData>;
+
+    // set state data and start the timer now
+    fn set(&mut self, peer: &Peer, state: WaitStateData);
+
+    // clear the timed state by type
+    fn clear(&mut self, peer: &Peer, state_type: WaitStateType);
+
+    fn get_by_id(&self, id: u64) -> Option<WaitStateData>;
+
 }
 
 
 #[derive(Clone)]
 struct WaitState {
     wait_timer: CasualTimer,
-    inner: WaitStateKind,
+    inner: WaitStateData,
 }
 
 
 impl WaitState {
 
-    const JOIN_WAIT_TO: u128 = 2000; // ms
-    const JOIN_PRE_TO: u128 = 2000; // ms
-    const MERGE_WAIT_TO: u128 = 2000; // ms
-    const MERGE_PRE_TO: u128 = 2000; // ms
-    
-    fn join_wait_timer(src: &Peer, waitfor: &Peer, prev_msg_id: u64) -> Self {
-        let mut ret = Self {
-            wait_timer: CasualTimer::new(Self::JOIN_WAIT_TO),
-            inner: WaitStateKind::JOIN_WAIT((src.to_owned(), waitfor.to_owned(), prev_msg_id)),
-        };
+    // create a timed state and start the timer, the state is considered stale after timeout
+    // todo use macros to be generic over types ?
+    fn new(kind: WaitStateData) -> Self {
+        let mut ret: Self;
+
+        match kind {
+            WaitStateData::JOIN_WAIT(data) => {
+                ret = Self {
+                    wait_timer: CasualTimer::new(JOIN_WAIT_TO),
+                    inner: WaitStateData::JOIN_WAIT(data),
+                };
+            }
+
+            WaitStateData::JOIN_PRE(data) => {
+                ret = Self {
+                    wait_timer: CasualTimer::new(JOIN_PRE_TO),
+                    inner: WaitStateData::JOIN_PRE(data),
+                };
+            },
+            
+            WaitStateData::MERGE_WAIT(data) => {
+                ret = Self {
+                    wait_timer: CasualTimer::new(MERGE_WAIT_TO),
+                    inner: WaitStateData::MERGE_WAIT(data),
+                };
+            },
+            
+            WaitStateData::MERGE_PRE(data) => {
+                ret = Self {
+                    wait_timer: CasualTimer::new(MERGE_PRE_TO),
+                    inner: WaitStateData::MERGE_PRE(data),
+                };
+            },
+            
+            WaitStateData::MERGE_CHECK(data) => {
+                ret = Self {
+                    wait_timer: CasualTimer::new(MERGE_CHECK_TO),
+                    inner: WaitStateData::MERGE_CHECK(data),
+                };
+            },
+        }
+
         ret.wait_timer.set_now();
         ret
     }
-
-
-    fn join_pre_timer(src: &Peer, waitfor: &Peer, prev_msg_id: u64) -> Self {
-        let mut ret = Self {
-            wait_timer: CasualTimer::new(Self::JOIN_PRE_TO),
-            inner: WaitStateKind::JOIN_PRE((src.to_owned(), waitfor.to_owned(), prev_msg_id)),
-        };
-        ret.wait_timer.set_now();
-        ret
-    }
-
-
-    fn merge_wait_timer(src: &Peer, waitfor: &Peer, prev_msg_id: u64) -> Self {
-        let mut ret = Self {
-            wait_timer: CasualTimer::new(Self::MERGE_WAIT_TO),
-            inner: WaitStateKind::MERGE_WAIT((src.to_owned(), waitfor.to_owned(), prev_msg_id)),
-        };
-        ret.wait_timer.set_now();
-        ret
-    }
-
-
-    fn merge_pre_timer(src: &Peer, waitfor: &Peer, prev_msg_id: u64) -> Self {
-        let mut ret = Self {
-            wait_timer: CasualTimer::new(Self::MERGE_PRE_TO),
-            inner: WaitStateKind::MERGE_PRE((src.to_owned(), waitfor.to_owned(), prev_msg_id)),
-        };
-        ret.wait_timer.set_now();
-        ret
-    }
-
 
 }
 
-
-pub struct WaitList {
+struct WaitStats {
     join_wait: Option<WaitState>,
     join_pre: Option<WaitState>,
 
     merge_wait: Option<WaitState>,
     merge_pre: Option<WaitState>,
+    merge_check: Option<WaitState>,
 }
 
 
-impl WaitList {
-    
+impl WaitStats {
     pub fn new() -> Self {
         Self {
             join_wait: None,
@@ -86,190 +145,257 @@ impl WaitList {
 
             merge_wait: None,
             merge_pre: None,
+            merge_check: None,
+        }
+    }
+}
+
+
+impl TimedStatesSingle for WaitStats {
+
+    fn get(&self, state_type: WaitStateType) -> Option<WaitStateData> {
+        match state_type {
+            WaitStateType::JOIN_WAIT => {
+                match self.join_wait.clone() {
+                    Some(stat) => Some(stat.inner),
+                    None => None
+                }
+            }
+
+            WaitStateType::JOIN_PRE => {
+                match self.join_pre.clone() {
+                    Some(stat) => Some(stat.inner),
+                    None => None
+                }
+            }
+
+            WaitStateType::MERGE_WAIT => {
+                match self.merge_wait.clone() {
+                    Some(stat) => Some(stat.inner),
+                    None => None
+                }
+            }
+
+            WaitStateType::MERGE_PRE => {
+                match self.merge_pre.clone() {
+                    Some(stat) => Some(stat.inner),
+                    None => None
+                }
+            }
+
+            WaitStateType::MERGE_CHECK => {
+                match self.merge_check.clone() {
+                    Some(stat) => Some(stat.inner),
+                    None => None
+                }
+            }
         }
     }
 
 
-    pub fn is_waiting(&self) -> bool {
-        self.get_join_wait().is_some() ||
-        self.get_join_pre().is_some() ||
-        self.get_merge_wait().is_some() ||
-        self.get_merge_pre().is_some()
+    fn check(&self, state_type: WaitStateType) -> Option<WaitStateData> {
+        match state_type {
+            WaitStateType::JOIN_WAIT => {
+                match self.join_wait.clone() {
+                    Some(stat) => {
+                        if stat.wait_timer.is_timeout() {
+                            Some(stat.inner)
+                        }
+                        else {
+                            None
+                        }
+                    }
+                    None => None
+                }
+            }
+
+            WaitStateType::JOIN_PRE => {
+                match self.join_pre.clone() {
+                    Some(stat) => {
+                        if stat.wait_timer.is_timeout() {
+                            Some(stat.inner)
+                        }
+                        else {
+                            None
+                        }
+                    }
+                    None => None
+                }
+            }
+
+            WaitStateType::MERGE_WAIT => {
+                match self.merge_wait.clone() {
+                    Some(stat) => {
+                        if stat.wait_timer.is_timeout() {
+                            Some(stat.inner)
+                        }
+                        else {
+                            None
+                        }
+                    }
+                    None => None
+                }
+            }
+
+            WaitStateType::MERGE_PRE => {
+                match self.merge_pre.clone() {
+                    Some(stat) => {
+                        if stat.wait_timer.is_timeout() {
+                            Some(stat.inner)
+                        }
+                        else {
+                            None
+                        }
+                    }
+                    None => None
+                }
+            }
+
+            WaitStateType::MERGE_CHECK => {
+                match self.merge_check.clone() {
+                    Some(stat) => {
+                        if stat.wait_timer.is_timeout() {
+                            Some(stat.inner)
+                        }
+                        else {
+                            None
+                        }
+                    }
+                    None => None
+                }
+            }
+        }
     }
 
 
+    fn set(&mut self, state: WaitStateData) {
+        match state {
+            WaitStateData::JOIN_WAIT(_) => {
+                self.join_wait = Some(WaitState::new(state))
+            }
+
+            WaitStateData::JOIN_PRE(_) => {
+                self.join_pre = Some(WaitState::new(state))
+            }
+
+            WaitStateData::MERGE_WAIT(_) => {
+                self.merge_wait = Some(WaitState::new(state))
+            }
+
+            WaitStateData::MERGE_PRE(_) => {
+                self.merge_pre = Some(WaitState::new(state))
+            }
+
+            WaitStateData::MERGE_CHECK(_) => {
+                self.merge_check = Some(WaitState::new(state))
+            }
+        }
+    }
+
+
+    fn clear(&mut self, state_type: WaitStateType) {
+        match state_type {
+            WaitStateType::JOIN_WAIT => {
+                self.join_wait = None
+            }
+
+            WaitStateType::JOIN_PRE => {
+                self.join_pre = None
+            }
+
+            WaitStateType::MERGE_WAIT => {
+                self.merge_wait = None
+            }
+
+            WaitStateType::MERGE_PRE => {
+                self.merge_pre = None
+            }
+
+            WaitStateType::MERGE_CHECK => {
+                self.merge_check = None
+            }
+        }
+    }
+
+    fn check_id(&self, id: u64) -> bool {
+        todo!()
+    }
+
+}
+
+pub struct WaitList {
+    inner_list: HashMap<Peer, WaitStats>,
+}
+
+
+impl WaitList {
+
+    pub fn new() -> Self {
+        Self {
+            inner_list: HashMap::new(),
+        } 
+    }
+
+
+    pub fn is_waiting(&self, root: &Peer) -> bool {
+        self.get(root, WaitStateType::JOIN_WAIT).is_some() ||
+        self.get(root, WaitStateType::JOIN_PRE).is_some() ||
+        self.get(root, WaitStateType::MERGE_WAIT).is_some() ||
+        self.get(root, WaitStateType::MERGE_WAIT).is_some() ||
+        self.get(root, WaitStateType::MERGE_CHECK).is_some()
+    }
+
+}
+
+
+impl TimedStates for WaitList {
     
-    pub fn get_join_wait(&self) -> Option<(Peer, Peer, u64)> {
-        if self.join_wait.is_some() {
-            match self.join_wait.clone().unwrap().inner {
-                WaitStateKind::JOIN_WAIT(s) => Some(s),
-                _ => unreachable!()
+    fn get(&self, peer: &Peer, state_type: WaitStateType) -> Option<WaitStateData> {
+        match self.inner_list.get(peer) {
+            Some(states) => {
+                states.get(state_type)
+            }
+            None => None
+        }   
+    }
+
+
+    fn check(&self, peer: &Peer, state_type: WaitStateType) -> Option<WaitStateData> {
+        match self.inner_list.get(peer) {
+            Some(states) => {
+                states.check(state_type)
+            }
+            None => None
+        }
+    }
+
+
+    fn set(&mut self, peer: &Peer, state: WaitStateData) {
+        match self.inner_list.get_mut(peer) {
+            Some(states) => {
+                states.set(state)
+            }
+            None => {
+                // todo log it or throw errors up?
+                warn!("")
             }
         }
-        else {
-            None
-        }
     }
 
-
-    pub fn set_join_wait(&mut self, src: &Peer, waitfor: &Peer, prev_msg_id: u64) {
-        self.join_wait = Some(WaitState::join_wait_timer(src, waitfor, prev_msg_id));
-    }
-
-
-    pub fn clear_join_wait(&mut self) {self.join_wait = None;}
-
-
-    pub fn check_join_wait(&mut self) -> Option<(Peer, Peer, u64)> {
-
-        if let Some(state) = self.join_wait.clone() {
-
-            if state.wait_timer.is_timeout() {
-
-                // clear timer
-                self.clear_join_wait();
-                
-                match &state.inner {
-                    WaitStateKind::JOIN_WAIT(stored_value) => {                        
-                        // as if is rejected
-                        return Some(stored_value.to_owned());
-                    }
-                    _ => {unreachable!()}
-                }
+    fn clear(&mut self, peer: &Peer, state_type: WaitStateType) {
+        match self.inner_list.get_mut(peer) {
+            Some(states) => {
+                states.clear(state_type)
+            }
+            None => {
+                // todo log it or throw errors up?
+                warn!("")
             }
         }
-        // timer not set or not timeout
-        None
     }
 
-
-    pub fn get_join_pre(&self) -> Option<(Peer, Peer, u64)> {
-        if self.join_pre.is_some() {
-            match self.join_pre.clone().unwrap().inner {
-                WaitStateKind::JOIN_PRE(s) => Some(s),
-                _ => unreachable!()
-            }
-        }
-        else {
-            None
-        }
-    }
-
-
-    pub fn set_join_pre(&mut self, src: &Peer, waitfor: &Peer, prev_msg_id: u64) { 
-        self.join_pre = Some(WaitState::join_pre_timer(src, waitfor, prev_msg_id));
-    }
-
-
-    pub fn clear_join_pre(&mut self) {self.join_pre = None;}
-
-
-    pub fn check_join_pre(&mut self) -> Option<(Peer, Peer, u64)> {
-
-        if let Some(state) = self.join_pre.clone() {
-
-            if state.wait_timer.is_timeout() {
-
-                // clear timer
-                self.join_pre = None;
-                
-                match &state.inner {
-                    WaitStateKind::JOIN_PRE(stored_value) => {                        
-                        // as if is rejected
-                        return Some(stored_value.to_owned());
-                    }
-                    _ => {unreachable!()}
-                }
-            }
-        }
-        // timer not set or not timeout
-        None
-    }
-
-
-    pub fn get_merge_wait(&self) -> Option<(Peer, Peer, u64)> {
-        if self.merge_wait.is_some() {
-            match self.merge_wait.clone().unwrap().inner {
-                WaitStateKind::MERGE_WAIT(s) => Some(s),
-                _ => unreachable!()
-            }
-        }
-        else {
-            None
-        }
-    }
-
-
-    pub fn set_merge_wait(&mut self, src: &Peer, waitfor: &Peer, prev_msg_id: u64) {
-        self.merge_wait = Some(WaitState::merge_wait_timer(src, waitfor, prev_msg_id));
-    }
-
-
-    pub fn clear_merge_wait(&mut self) {self.merge_wait = None;}
-
-
-    pub fn check_merge_wait(&mut self) -> Option<(Peer, Peer, u64)> {
-        if let Some(state) = self.merge_wait.clone() {
-
-            if state.wait_timer.is_timeout() {
-
-                // clear timer
-                self.merge_wait = None;
-                
-                match &state.inner {
-                    WaitStateKind::MERGE_WAIT(stored_value) => {                        
-                        // as if is rejected
-                        return Some(stored_value.to_owned());
-                    }
-                    _ => {unreachable!()}
-                }
-            }
-        }
-        // timer not set or not timeout
-        None
-    }
-
-
-    pub fn get_merge_pre(&self) -> Option<(Peer, Peer, u64)> {
-        if self.merge_pre.is_some() {
-            match self.merge_pre.clone().unwrap().inner {
-                WaitStateKind::MERGE_PRE(s) => Some(s),
-                _ => unreachable!()
-            }
-        }
-        else {
-            None
-        }
-    }
-
-
-    pub fn set_merge_pre(&mut self, src: &Peer, waitfor: &Peer, prev_msg_id: u64) {
-        self.merge_pre = Some(WaitState::merge_pre_timer(src, waitfor, prev_msg_id));
-    }
-
-
-    pub fn clear_merge_pre(&mut self) {self.merge_pre = None;}
-
-
-    pub fn check_merge_pre(&mut self) -> Option<(Peer, Peer, u64)> {
-        if let Some(state) = self.merge_pre.clone() {
-
-            if state.wait_timer.is_timeout() {
-
-                // clear timer
-                self.merge_pre = None;
-                
-                match &state.inner {
-                    WaitStateKind::MERGE_PRE(stored_value) => {                        
-                        // as if is rejected
-                        return Some(stored_value.to_owned());
-                    }
-                    _ => {unreachable!()}
-                }
-            }
-        }
-        // timer not set or not timeout
-        None
+    fn get_by_id(&self, id: u64) -> Option<WaitStateData> {
+        todo!()
     }
 
 }

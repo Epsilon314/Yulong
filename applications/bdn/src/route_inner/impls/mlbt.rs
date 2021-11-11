@@ -9,7 +9,7 @@ use crate::route_inner::{
     RelayCtl,
     impls::{
         mlbt_message::RelayMsgKind,
-        mlbt_stat::MlbtStat,
+        mlbt_stat::MlbtStatList,
         mlbt_stat::MlbtStatMaintainer,
     }
 };
@@ -19,10 +19,11 @@ use log::warn;
 use yulong_network::identity::Peer;
 
 use super::mlbt_message::RelayMsgMerge;
+use super::mlbt_message::RelayMsgMergeCheck;
 use super::mlbt_message::{RelayCtlMessage, RelayMsgJoin,
     RelayMsgLeave, RelayMsgAccept, RelayMsgReject};
 
-use super::mlbt_wait::{WaitStateKind, WaitList};
+use super::mlbt_wait::{WaitList, TimedStates, WaitStateType, WaitStateData};
 
 use yulong::utils::AsBytes;
 
@@ -33,7 +34,7 @@ pub struct MlbtRelayCtlContext {
 
     wait_list: WaitList,
 
-    mlbt_stat: MlbtStat,
+    mlbt_stat: MlbtStatList,
 }
 
 
@@ -55,7 +56,7 @@ impl RelayCtl for MlbtRelayCtlContext {
 
             wait_list: WaitList::new(),
 
-            mlbt_stat: MlbtStat::new(),
+            mlbt_stat: MlbtStatList::new(),
         }
     }
 
@@ -185,25 +186,39 @@ impl MlbtRelayCtlContext {
 
         // linear check all wait timers
 
-        if let Some((src, waitfor, _)) = self.wait_list.check_join_wait() {
-            self.join_wait_cb(route_ctl, &src, &waitfor, None, false); // must be None
+        for root in route_ctl.get_src_list() {
+
+            if let Some(timed_data) = 
+                self.wait_list.check(&root, WaitStateType::JOIN_WAIT)
+            {
+                if let WaitStateData::JOIN_WAIT((src, waitfor, _)) = timed_data {
+                    self.join_wait_cb(route_ctl, &src, &waitfor, None, false); // must be None
+                }
+                else {
+                    unreachable!()
+                }
+            }
+
+
+            if let Some(timed_data) = 
+                self.wait_list.check(&root, WaitStateType::JOIN_PRE)
+            {
+                if let WaitStateData::JOIN_PRE((src, waitfor, _)) = timed_data {
+                    self.join_pre_cb(route_ctl, &src, &waitfor, None, false);
+                }
+            }
+    
+            //todo
+
         }
-
-
-        if let Some((src, waitfor, _)) = self.wait_list.check_join_wait() {
-            self.join_pre_cb(route_ctl, &src, &waitfor, None, false);
-        }
-
     }
 
 
     // form a join request
     fn join(&mut self, target: &Peer, src: &Peer) -> Option<(Peer, RelayCtlMessage)> {
     
-        if self.wait_list.get_join_pre().is_some() || 
-            self.wait_list.get_join_wait().is_some() 
-        {
-            // do not allow 
+        if self.wait_list.is_waiting(src) {
+            // todo: rethink join condition
             return None;
         }
 
@@ -211,7 +226,10 @@ impl MlbtRelayCtlContext {
 
         // log the time a join quest is made
         // todo: figure out send_to success / failed
-        self.wait_list.set_join_wait(src, target, req_seq);
+        self.wait_list.set(
+            src,
+            WaitStateData::JOIN_WAIT((src.to_owned(), target.to_owned(), req_seq))
+        );
 
         Some((
             target.to_owned(),
@@ -250,23 +268,33 @@ impl MlbtRelayCtlContext {
             
             MlbtState::ESTB => {
             
-                if self.wait_list.is_waiting() {
+                if self.wait_list.is_waiting(&join_msg.src()) {
 
                     // waiting for sender, one with bigger peer id accepts
                     // todo!(ack message can be skipped since recv a join req
                     // itself means has send capability and join intention)
-                    if let Some((_, cand, _)) = self.wait_list.get_join_wait() {
-                        if cand == *sender && route_ctl.local_id() > *sender {
 
-                            let ack = msg.accept(self.seq());
+                    if let Some(timed_data) = 
+                        self.wait_list.get(&join_msg.src(), WaitStateType::JOIN_WAIT) 
+                    {
+                        if let WaitStateData::JOIN_WAIT((_, cand, _)) = timed_data {
+                            if cand == *sender && route_ctl.local_id() > *sender {
 
-                            self.wait_list.clear_join_wait();
-                            self.wait_list.set_join_pre(&join_msg.src(), sender, ack.msg_id());
-                            
-                            return Some((
-                                sender.to_owned(),
-                                ack
-                            ));
+                                let ack = msg.accept(self.seq());
+    
+                                self.wait_list.clear(&join_msg.src(), WaitStateType::JOIN_WAIT);
+                                self.wait_list.set(
+                                    &join_msg.src(),
+                                    WaitStateData::JOIN_WAIT(
+                                        (join_msg.src().clone(), sender.clone(), ack.msg_id())
+                                    )
+                                );
+                                
+                                return Some((
+                                    sender.to_owned(),
+                                    ack
+                                ));
+                            }
                         }
                     }
 
@@ -280,7 +308,12 @@ impl MlbtRelayCtlContext {
                 // is a working node and state is clear, accept
                 let ack = msg.accept(self.seq());
 
-                self.wait_list.set_join_wait(&join_msg.src(), sender, ack.msg_id());
+                self.wait_list.set(
+                    &join_msg.src(),
+                    WaitStateData::JOIN_WAIT(
+                        (join_msg.src().clone(), sender.clone(), ack.msg_id())
+                    )
+                );
 
                 Some((
                     sender.to_owned(),
@@ -311,7 +344,7 @@ impl MlbtRelayCtlContext {
     {
 
         // anyway, the timer should be cleared
-        self.wait_list.clear_join_wait();
+        self.wait_list.clear(src, WaitStateType::JOIN_WAIT);
 
         if incoming_id.is_none() {
             // timeout
@@ -356,7 +389,7 @@ impl MlbtRelayCtlContext {
     {
 
         // anyway, the timer should be cleared
-        self.wait_list.clear_join_pre();
+        self.wait_list.clear(src, WaitStateType::JOIN_PRE);
 
         if incoming_id.is_none() {
             // todo: timeout cb
@@ -431,54 +464,46 @@ impl MlbtRelayCtlContext {
         // check all pending wait linearly (and return early), if none of them matches
         // it may be ill-formed
 
-        if let Some((src, waitfor, id)) = self.wait_list.get_join_wait() {
-            if decision_msg_ack == id {
+        if let Some(timed_data) = self.wait_list.get_by_id(decision_msg_ack) {
 
-                let reply = self.join_wait_cb(
-                    route_ctl, &src, &waitfor, Some(incoming_msg_id), pos);
+            match timed_data {
                 
-                if reply.is_some() {
-                    ret.push(reply.unwrap());
+                WaitStateData::JOIN_WAIT((src, waitfor, id)) => {
+                    let reply = self.join_wait_cb(
+                        route_ctl, &src, &waitfor, Some(incoming_msg_id), pos);
+                    
+                    if reply.is_some() {
+                        ret.push(reply.unwrap());
+                    }
+                    
+                    return ret;
                 }
-                
-                return ret;
-            }
-        }
 
-
-        if let Some((src, waitfor, id)) = self.wait_list.get_join_pre() {
-            if decision_msg_ack == id {
-
-                self.join_pre_cb(route_ctl, &src, &waitfor, 
-                    Some(incoming_msg_id), pos);
-                return ret;
-            }
-        }
-
-
-        if let Some((src, waitfor, id)) = self.wait_list.get_merge_wait() {
-            if decision_msg_ack == id {
-                
-                let reply = self.merge_wait_cb(
-                    route_ctl, &src, &waitfor, Some(incoming_msg_id), pos);
-                
-                if reply.is_some() {
-                    ret.push(reply.unwrap());
+                WaitStateData::JOIN_PRE((src, waitfor, id)) => {
+                    self.join_pre_cb(route_ctl, &src, &waitfor, 
+                        Some(incoming_msg_id), pos);
+                    return ret;
                 }
-                return ret;
+
+                WaitStateData::MERGE_WAIT((src, waitfor, id)) => {
+                    let reply = self.merge_wait_cb(
+                        route_ctl, &src, &waitfor, Some(incoming_msg_id), pos);
+                    
+                    if reply.is_some() {
+                        ret.push(reply.unwrap());
+                    }
+                    return ret;
+                }
+
+                WaitStateData::MERGE_PRE((src, waitfor, id)) => {
+                    self.merge_pre_cb(route_ctl, &src, &waitfor, 
+                        Some(incoming_msg_id), pos);
+                    return ret;
+                }
+
+                WaitStateData::MERGE_CHECK(_) => todo!(),
             }
         }
-
-
-        if let Some((src, waitfor, id)) = self.wait_list.get_merge_pre() {
-            if decision_msg_ack == id {
-
-                self.merge_pre_cb(route_ctl, &src, &waitfor, 
-                    Some(incoming_msg_id), pos);
-                return ret;
-            }
-        }
-
         
         warn!("MlbtRelayCtlContext::accept_dispatcher \
             Unmatched accept message: {:?}", msg);
@@ -490,7 +515,7 @@ impl MlbtRelayCtlContext {
     fn merge(&mut self, src: &Peer, target: &Peer) -> Option<(Peer, RelayCtlMessage)> {
 
         // todo
-        if self.wait_list.is_waiting() {
+        if self.wait_list.is_waiting(src) {
             return None;
         }
 
@@ -498,14 +523,30 @@ impl MlbtRelayCtlContext {
         let msg_seq = self.seq();
 
         // set timer
-        self.wait_list.set_merge_wait(src, target, msg_seq);
+        self.wait_list.set(src, 
+            WaitStateData::MERGE_WAIT((src.to_owned(), target.to_owned(), msg_seq))
+        );
+
+        let weight = self.mlbt_stat.relay_inv(src);
+        if weight.is_none() {
+            warn!("MlbtRelayCtlContext::merge relay_inv at root {} is unknown", src);
+            return None;
+        }
+        let weight = weight.unwrap();   // checked, shadow it
+
+        let merge_thrd = self.mlbt_stat.merge_thrd(src);
+        if merge_thrd.is_none() {
+            warn!("MlbtRelayCtlContext::merge merge_thr at root {} is unknown", src);
+            return None;
+        }
+        let merge_thrd = merge_thrd.unwrap();
 
         Some((target.to_owned(), RelayCtlMessage::new(
             RelayMsgKind::MERGE,
             msg_seq,
             RelayMsgMerge::new(
-                self.mlbt_stat.relay_inv(),
-                self.mlbt_stat.merge_thrd(),
+                weight,
+                merge_thrd,
                 src
             )
         )))
@@ -519,7 +560,7 @@ impl MlbtRelayCtlContext {
         // decode merge request
         let merge_msg = RelayMsgMerge::from_bytes(&msg.payload());
         if merge_msg.is_err() {
-            warn!("MlbtRelayCtlContext::join_callback parse RelayMsgMerge failed: {}",
+            warn!("MlbtRelayCtlContext::merge_cb parse RelayMsgMerge failed: {}",
                 merge_msg.unwrap_err());
 
             // ignore ill-formed messages
@@ -527,14 +568,30 @@ impl MlbtRelayCtlContext {
         }
         let merge_msg = merge_msg.unwrap();
 
+
         // todo! check if is waiting for other procedures
-        if self.wait_list.is_waiting() {
+        if self.wait_list.is_waiting(&merge_msg.src()) {
             // todo
         }
 
         // check merge state
         let remote_weight = merge_msg.weight();
-        let local_weight = self.mlbt_stat.relay_inv();
+        
+        let local_weight = self.mlbt_stat.relay_inv(&merge_msg.src());
+        if local_weight.is_none() {
+            warn!("MlbtRelayCtlContext::merge_cb relay_inv at root {} is unknown",
+                &merge_msg.src());
+            return None;
+        }
+        let local_weight = local_weight.unwrap();
+
+        let merge_thrd = self.mlbt_stat.merge_thrd(&merge_msg.src());
+        if merge_thrd.is_none() {
+            warn!("MlbtRelayCtlContext::merge merge_thr at root {} is unknown", &merge_msg.src());
+            return None;
+        }
+        let merge_thrd = merge_thrd.unwrap();
+
 
         let weight_diff: u64;
         if remote_weight > local_weight {
@@ -544,7 +601,7 @@ impl MlbtRelayCtlContext {
             weight_diff = local_weight - remote_weight;
         }
         
-        let thrd = min(merge_msg.merge_thrd(), self.mlbt_stat.merge_thrd());
+        let thrd = min(merge_msg.merge_thrd(), merge_thrd);
 
         let merge_cond = weight_diff < thrd;
 
@@ -561,9 +618,16 @@ impl MlbtRelayCtlContext {
 
             // node is trying to merge, will accept and pre for comfirmation
             MlbtState::INIT => {
-                
+
                 // todo!
-                self.wait_list.set_merge_pre(&merge_msg.src(), sender, msg.msg_id());
+                self.wait_list.set(
+                    &merge_msg.src(), 
+                    WaitStateData::MERGE_PRE((
+                        merge_msg.src().clone(),
+                        sender.to_owned(),
+                        msg.msg_id()
+                    ))
+                );
 
                 Some((
                     sender.to_owned(),
@@ -591,7 +655,7 @@ impl MlbtRelayCtlContext {
     {
 
         // anyway, the timer should be cleared
-        self.wait_list.clear_merge_wait();
+        self.wait_list.clear(src, WaitStateType::MERGE_WAIT);
 
         if incoming_id.is_none() {
             // timeout
@@ -604,7 +668,14 @@ impl MlbtRelayCtlContext {
             let ack_seq = self.seq();
 
             // todo timer
-            self.wait_list.set_merge_pre(src, waitfor, ack_seq);
+            self.wait_list.set(
+                src,
+                WaitStateData::MERGE_PRE((
+                    src.to_owned(),
+                    waitfor.to_owned(),
+                    ack_seq
+                ))
+            );
 
             Some((
                 waitfor.to_owned(),
@@ -629,7 +700,7 @@ impl MlbtRelayCtlContext {
     {
         
         // clear timer
-        self.wait_list.clear_merge_pre();
+        self.wait_list.clear(src, WaitStateType::MERGE_PRE);
 
         if incoming_id.is_none() {
             // todo: timeout cb
@@ -651,6 +722,54 @@ impl MlbtRelayCtlContext {
         else {
             // todo: rejected cb
         }
+    }
+
+
+    // send a check request to root
+    fn merge_check(&mut self, src: &Peer, weight: u64) -> Option<(Peer, RelayCtlMessage)> {
+        // todo
+        if self.wait_list.is_waiting(src) {
+            return None;
+        }
+
+        let msg_seq = self.seq();
+
+        // set timer
+        self.wait_list.set(
+            src,
+            WaitStateData::MERGE_CHECK((
+                src.to_owned(),
+                msg_seq
+            ))
+        );
+
+        Some((src.to_owned(), RelayCtlMessage::new(
+            RelayMsgKind::MERGE_CHECK,
+            msg_seq,
+            RelayMsgMergeCheck::new(weight)
+        )))
+    }
+
+
+    // for root only
+    fn merge_check_cb(sender: &Peer, msg: &RelayCtlMessage) -> Option<(Peer, RelayCtlMessage)> {
+
+        // decode merge request
+        let merge_msg = RelayMsgMergeCheck::from_bytes(&msg.payload());
+        if merge_msg.is_err() {
+            warn!("MlbtRelayCtlContext::merge_check_cb parse RelayMsgMergeCheck failed: {}",
+                merge_msg.unwrap_err());
+
+            // ignore ill-formed messages
+            return None; 
+        }
+        let merge_msg = merge_msg.unwrap();
+
+        // todo check self is src
+
+        // let w = merge_msg.weight()
+
+        None
     }
 
 }
