@@ -14,8 +14,8 @@ use crypto::{PublicKey, PrivateKey, Signer, sm_signer::SmSigner};
 
 #[derive(Clone)]
 pub struct Me {
-    pub peer: Peer,
-    pub privatekey: PrivateKey
+    peer: Peer,
+    privatekey: PrivateKey
 }
 
 impl Me {
@@ -45,6 +45,20 @@ impl Me {
             },
             privatekey: sk
         }
+    }
+
+    /// Get a reference to the me's peer.
+    pub fn peer(&self) -> &Peer {
+        &self.peer
+    }
+
+    /// Get a reference to the me's privatekey.
+    pub fn private_key(&self) -> &PrivateKey {
+        &self.privatekey
+    }
+
+    pub fn public_key(&self) -> &PublicKey {
+        &self.peer.pubkey
     }
 }
 
@@ -182,4 +196,9 @@ impl Peer {
         }
     }
 
+
+    /// Get a reference to the peer's pubkey.
+    pub fn pubkey(&self) -> &PublicKey {
+        &self.pubkey
+    }
 }

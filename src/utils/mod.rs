@@ -36,6 +36,11 @@ impl CasualTimer {
         self.last_seen = Some(SystemTime::now());
     }
 
+
+    pub fn reset(&mut self) {
+        self.last_seen = None;
+    }
+
     
     pub fn is_timeout(&self) -> bool {
         match self.last_seen {

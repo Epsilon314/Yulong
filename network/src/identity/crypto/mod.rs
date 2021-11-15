@@ -1,6 +1,7 @@
 #![allow(unused_variables)]
 pub mod sm_signer;
 
+use libsm::sm2::signature::Pubkey;
 use yulong::error::{DeserializeError, SerializeError, DumbError};
 use yulong::utils::AsBytes;
 
@@ -20,6 +21,12 @@ pub trait Signer: 'static + Send {
 
     fn sign(&self, msg: &[u8], sk: &Self::SK, pk: &Self::PK) -> Self::SIG;
     fn verify(&self, msg: &[u8], pk: &Self::PK, sig: &Self::SIG) -> bool;
+}
+
+
+pub trait GenericSigner: Signer {
+    fn sign(&self, msg: &[u8], sk: &PrivateKey, pk: &PublicKey) -> Self::SIG;
+    fn verify(&self, msg: &[u8], pk: &Pubkey, sig: &Self::SIG) -> bool;
 }
 
 #[derive(Clone)]

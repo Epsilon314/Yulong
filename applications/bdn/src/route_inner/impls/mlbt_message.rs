@@ -22,6 +22,7 @@ pub enum RelayMsgKind {
     ACCEPT = 2,
     REJECT = 3,
     MERGE = 4,
+    MERGE_CHECK = 5,
 }
 
 
@@ -360,6 +361,7 @@ impl RelayMsgMerge {
 }
 
 
+#[derive(Debug)]
 pub struct RelayMsgMergeCheck {
     weight: u64,
 }
@@ -411,6 +413,10 @@ impl RelayMsgMergeCheck {
         Self {
             weight
         }
+    }
+
+    pub fn weight(&self) -> u64 {
+        self.weight
     }
 }
 

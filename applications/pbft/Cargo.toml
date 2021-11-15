@@ -13,6 +13,14 @@ prost-types = "0.7.0"
 yulong = {path = "../../"}
 yulong_network = {path = "../../network"}
 yulong_tcp = {path = "../../transport/tcp"}
+yulong_bdn = {path = "../../applications/bdn"}
+log = "0.4.14"
+
+async-std = {version = "1.10.0", features = ["attributes", "tokio1"]}
+async-trait = "0.1.51"
+
+num-traits = "0.2"
+num-derive = "0.3"
 
 [build-dependencies]
 prost-build = "0.7.0"
