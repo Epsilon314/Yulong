@@ -7,12 +7,12 @@ pub mod error;
 
 mod test;
 
-mod message;
-mod msg_header;
-mod route;
+pub mod message;
+pub mod msg_header;
+pub mod route;
 mod measure;
 
-mod route_inner;
+pub mod route_inner;
 
 pub mod overlay;
 

@@ -3,6 +3,8 @@ use yulong::utils::AsBytes;
 use yulong::error::{DumbError, SerializeError, DeserializeError};
 use crate::identity::crypto::Signer;
 
+use super::GenericSigner;
+
 pub struct SmSigner {
     ctx: sm2::signature::SigCtx
 }
@@ -106,5 +108,16 @@ impl Signer for SmSigner {
 
     fn verify(&self, msg: &[u8], pk: &Self::PK, sig: &Self::SIG) -> bool {
         self.ctx.verify(msg, &pk.pk, &sig.sig)
+    }
+}
+
+
+impl GenericSigner for SmSigner {
+    fn sign(&self, msg: &[u8], sk: &super::PrivateKey, pk: &super::PublicKey) -> Self::SIG {
+        todo!()
+    }
+
+    fn verify(&self, msg: &[u8], pk: &sm2::signature::Pubkey, sig: &Self::SIG) -> bool {
+        todo!()
     }
 }

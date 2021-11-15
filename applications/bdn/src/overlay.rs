@@ -67,7 +67,7 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
             w_stream: HashMap::<Peer, <T as Transport>::Stream>::new(),
             msg_sender: sender,
             msg_receiver: receiver,
-            route: Route::new(&id.peer),
+            route: Route::new(&id.peer()),
             heartbeat_timer: timer,
         }
     }
@@ -150,6 +150,7 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
 
         if let Some(wstream) = self.w_stream.get_mut(&dst) {
             // use existing connection to dst
+
             wstream.write_all(&msg_bytes).await.unwrap_or_else(|err| {
                 warn!("BDN::send_to write error: {}", err);
             });
@@ -372,7 +373,7 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
         if incoming_msg.is_relay() {
 
             let src = &incoming_msg.src();
-            incoming_msg.set_from(&self.local_identity.peer);
+            incoming_msg.set_from(&self.local_identity.peer());
 
             let relay_list = self.route.get_relay(src);
             for next_node in relay_list {
@@ -397,8 +398,8 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
         // send reply immediately and in sequence
         for mut msg in reply_list {
 
-            msg.set_src(&self.local_identity.peer);
-            msg.set_from(&self.local_identity.peer);
+            msg.set_src(&self.local_identity.peer());
+            msg.set_from(&self.local_identity.peer());
 
             async_std::task::block_on(
                 self.send_to(&msg.dst(), &mut msg));
@@ -421,6 +422,33 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
         }
     }
 
+}
+
+
+// can we just define a deref to route, or in other word is AppLayerRouteUser
+// the only trait we want to delegate?
+impl<T: Transport, R: RelayCtl + Send + Sync> AppLayerRouteUser for BDN<T, R> {
+    type Host = Peer;
+
+    fn get_delegate(&self, src: &Self::Host) -> Option<Self::Host> {
+        self.route.get_delegate(src)
+    }
+
+    fn get_best_src(&self) -> Option<Self::Host> {
+        self.route.get_best_src()
+    }
+
+    fn get_src_list(&self) -> Vec<Self::Host> {
+        self.route.get_src_list()
+    }
+
+    fn get_next_hop(&self, dst: &Self::Host) -> Option<Self::Host> {
+        self.route.get_next_hop(dst)
+    }
+
+    fn get_relay(&self, src: &Self::Host) -> Vec<Self::Host> {
+        self.route.get_relay(src)
+    }
 }
 
 
@@ -450,7 +478,7 @@ mod test {
         let peer = Peer::from_random();
         let socket = SocketAddrBi::new(IpAddr::from_str("127.0.0.1").unwrap(), 9002_u16, None);
 
-        println!("New BDN client at: {:?}", bdn.local_identity.peer.get_id());
+        println!("New BDN client at: {:?}", bdn.local_identity.peer().get_id());
         bdn.address_book.insert(
             &peer,
             &socket,
@@ -497,7 +525,7 @@ mod test {
         let peer = Peer::from_random();
         let socket = SocketAddrBi::new(IpAddr::from_str("127.0.0.1").unwrap(), 9001_u16, None);
 
-        println!("New BDN client at: {:?}", bdn.local_identity.peer.get_id());
+        println!("New BDN client at: {:?}", bdn.local_identity.peer().get_id());
         bdn.address_book.insert(
             &peer,
             &socket,

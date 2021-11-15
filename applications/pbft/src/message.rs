@@ -1,22 +1,43 @@
+use std::fmt::Display;
+
+use num_derive::{FromPrimitive, ToPrimitive};
+use num_traits::{FromPrimitive, ToPrimitive};
 use prost::Message;
 
 use yulong::error::{DeserializeError, SerializeError};
 use yulong::utils::AsBytes;
+use yulong_network::identity::crypto::{GenericSigner, PublicKey, PrivateKey};
 
 use yulong_network::identity::Peer;
 
 use crate::pbft_message::ProtoPbftMessage;
 
+
+#[derive(FromPrimitive, ToPrimitive, PartialEq, Debug, Clone, Copy)]
+pub enum PbftMsgKind {
+    REQUEST = 0,
+    PRE_PREPARE = 1,
+    PREPARE = 2,
+    COMMIT = 3,
+    REPLY = 4,
+
+    BLAME = 5,
+    NEW_EPOCH = 6,
+    CONFIRM_EPOCH = 7,
+}
+
+
+#[derive(Debug)]
 pub struct PbftMessage {
-    pub round: u32,
+    round: u32,
     
-    pub msg_no: u32,
-    pub msg_type: u32,
+    msg_no: u32,
+    msg_type: PbftMsgKind,
 
-    pub signer_id: Peer,
+    signer_id: Peer,
 
-    pub proof: Vec<u8>,
-    pub payload: Vec<u8>,
+    proof: Vec<u8>,
+    payload: Vec<u8>,
 }
 
 impl AsBytes for PbftMessage {
@@ -26,7 +47,7 @@ impl AsBytes for PbftMessage {
         let proto_message = ProtoPbftMessage {
             round: self.round,
             msg_no: self.msg_no,
-            msg_type: self.msg_type,
+            msg_type: ToPrimitive::to_u32(&self.msg_type).unwrap(),
             signer_id: self.signer_id.get_id().to_vec(),
             proof: self.proof.clone(),
             payload: self.payload.clone(),
@@ -43,7 +64,7 @@ impl AsBytes for PbftMessage {
             .map(|m| Self {
                 round: m.round,
                 msg_no: m.msg_no,
-                msg_type: m.msg_type,
+                msg_type: FromPrimitive::from_u32(m.msg_type).unwrap(),
  
                 signer_id: Peer::try_from_id(&m.signer_id).expect("Wrong ID size."),
 
@@ -55,10 +76,99 @@ impl AsBytes for PbftMessage {
 
 
 impl PbftMessage {
+
+
+    // do not sign
+    pub fn new(round: u32, msg_no: u32, msg_type: PbftMsgKind, signer_id: Peer,
+        payload: Vec<u8>) -> Self 
+    { 
+        Self {
+            round,
+            msg_no,
+            msg_type,
+            signer_id,
+            proof: vec![],
+            payload
+        }
+    }
+
+
+    pub fn sign<S: GenericSigner>(&mut self,s: &S, sk: &PrivateKey, pk: &PublicKey) {
+        let sig = GenericSigner::sign(s, &self.into_bytes().unwrap(), sk, pk);
+        self.proof = sig.into_bytes().unwrap();
+    }
+
+
+    pub fn verify(&self) -> bool {
+        //todo: check if proof is valid
+        true
+    }
+
+    /// Get a reference to the pbft message's round.
+    pub fn round(&self) -> u32 {
+        self.round
+    }
+
+    /// Set the pbft message's round.
+    pub fn set_round(&mut self, round: u32) {
+        self.round = round;
+    }
+
+    /// Get a reference to the pbft message's msg no.
+    pub fn msg_no(&self) -> u32 {
+        self.msg_no
+    }
+
+    /// Set the pbft message's msg no.
+    pub fn set_msg_no(&mut self, msg_no: u32) {
+        self.msg_no = msg_no;
+    }
+
+    /// Get a reference to the pbft message's msg type.
+    pub fn msg_type(&self) -> PbftMsgKind {
+        self.msg_type
+    }
+
+    /// Set the pbft message's msg type.
+    pub fn set_msg_type(&mut self, msg_type: PbftMsgKind) {
+        self.msg_type = msg_type;
+    }
+
+    /// Get a reference to the pbft message's signer id.
+    pub fn signer_id(&self) -> &Peer {
+        &self.signer_id
+    }
+
+    /// Set the pbft message's signer id.
+    pub fn set_signer_id(&mut self, signer_id: Peer) {
+        self.signer_id = signer_id;
+    }
+
+    /// Get a reference to the pbft message's proof.
+    pub fn proof(&self) -> &[u8] {
+        self.proof.as_ref()
+    }
+
+    /// Set the pbft message's proof.
+    pub fn set_proof(&mut self, proof: Vec<u8>) {
+        self.proof = proof;
+    }
+
+    /// Get a reference to the pbft message's payload.
+    pub fn payload(&self) -> &[u8] {
+        self.payload.as_ref()
+    }
+
+    /// Set the pbft message's payload.
+    pub fn set_payload(&mut self, payload: Vec<u8>) {
+        self.payload = payload;
+    }
 }
 
 #[cfg(test)]
 mod test {
+
+    use super::*;
 
     use yulong::utils::AsBytes;
 
@@ -82,11 +192,11 @@ mod test {
             round: 10,
     
             msg_no: 11278,
-            msg_type: 0,
+            msg_type: PbftMsgKind::PREPARE,
         
             signer_id: message::Peer::from_bytes(&[1,2,3,4,5,6]),
         
-            proof: signer.sign(&vec![3,3,3,3,3,3,3,3,3], &sk, &pk).into_bytes().unwrap(),
+            proof: Signer::sign(&signer, &vec![3,3,3,3,3,3,3,3,3], &sk, &pk).into_bytes().unwrap(),
             payload: vec![3,3,3,3,3,3,3,3,3],
         };
 

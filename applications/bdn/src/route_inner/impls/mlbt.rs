@@ -124,6 +124,14 @@ impl RelayCtl for MlbtRelayCtlContext {
                     ret.push((peer, ctl_msg_payload.into_bytes().unwrap()));
                 }
             }
+
+
+            RelayMsgKind::MERGE_CHECK => {
+                let reply = self.merge_check_cb(route_ctl, sender, &parse_ctl_message);
+                if let Some((peer, ctl_msg_payload)) = reply {
+                    ret.push((peer, ctl_msg_payload.into_bytes().unwrap()));
+                }
+            }
         
 
             _ => {
