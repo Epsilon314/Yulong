@@ -1,6 +1,7 @@
 use std::collections::{HashMap, hash_map};
 use std::hash::Hash;
 
+#[derive(PartialEq)]
 pub struct BidirctHashmap<K, V> 
     where K: Hash + PartialEq + Eq + Clone,
           V: Hash + PartialEq + Eq + Clone,

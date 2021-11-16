@@ -1,12 +1,14 @@
+use std::collections::HashSet;
 use std::vec;
-
+use rand;
 use crate::message::{
     PbftMessage,
     PbftMsgKind
 };
-use crate::quorum::{QuorumCollector, VoteBox, VoteResult};
+use crate::participants::{Participants, ParticipantsStore};
+use crate::quorum::{QuorumCollector, VoteBox, VoteBoxes, VoteResult};
 
-use log::{debug, warn};
+use log::{debug, info, warn};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 
@@ -41,6 +43,8 @@ enum PbftStage {
     CONFIRM_EPOCH = 7,
 }
 
+const PAYLOAD_MAX: usize = 500; // bytes
+
 pub struct PbftContext<S: GenericSigner> {
     network_handle: BDN<TcpContext, MlbtRelayCtlContext>,
     signer: S,
@@ -53,19 +57,23 @@ pub struct PbftContext<S: GenericSigner> {
     stage: PbftStage,
 
     total_node: u32,
-    quorum: u32,
+    total_node_set: Participants,
+
+    quorum_size: u32,
 
     primary_id: Peer,
+
     prepare_vote_box: VoteBox,
     commit_vote_box: VoteBox,
     blame_vote_box: VoteBox,
     new_epoch_vote_box: VoteBox,
-    reply_vote_boxes: Vec<VoteBox>,
+    reply_vote_boxes: VoteBoxes,
 
+    request_timer: CasualTimer,
     preprepare_timer: CasualTimer,
     prepare_timer: CasualTimer,
 
-
+    test: bool,
 
 }
 
@@ -97,12 +105,22 @@ impl<S: GenericSigner> PbftContext<S> {
 
 
     fn reset_all_timer(&mut self) {
+        self.request_timer.reset();
         self.preprepare_timer.reset();
         self.prepare_timer.reset();
     }
 
 
-    fn pbft_msg_cb(&mut self, msg: PbftMessage) {
+    fn pbft_msg_cb(&mut self, mut msg: PbftMessage) {
+
+        let peer_id = msg.signer_id_mut();
+        self.total_node_set.query_pk(peer_id);
+
+        if !msg.verify() {
+            warn!("PbftContext::pbft_msg_cb fail to verify signature.");
+            // return;
+        }
+
         match msg.msg_type() {
             PbftMsgKind::REQUEST => self.request_cb(msg),
             PbftMsgKind::PRE_PREPARE => todo!(),
@@ -318,47 +336,217 @@ impl<S: GenericSigner> PbftContext<S> {
 
 
     fn replay_cb(&mut self, msg: PbftMessage) {
-        // todo
+        
+        self.reply_vote_boxes.vote(msg.signer_id(), true, msg.round());
+        if self.reply_vote_boxes.count_pos(msg.round()) == self.total_node - 1 {
+            // all committed
+            info!("All Committed");
+            info!("round: {}", msg.round());
+        }
+
+        if *self.local_id.peer() == self.primary_id && msg.round() == self.round {
+            if self.reply_vote_boxes.result(self.round) == VoteResult::PASS {
+                info!("Majority Committed");
+                info!("round: {}", self.round);
+
+                self.new_round();
+
+                if self.test {
+                    self.send_request(&Self::test_msg());
+                }
+            }
+        }
+
+    }
+
+
+    fn new_epoch_cb(&mut self, msg: PbftMessage) {
+        if msg.round() == self.round && *msg.signer_id() == self.get_backup_primary() {
+            let mut reply_msg = PbftMessage::new(
+                self.round,
+                self.seq(),
+                PbftMsgKind::CONFIRM_EPOCH,
+                self.local_id.peer().clone(),
+                vec![]
+            );
+
+            reply_msg.sign(
+                &self.signer, 
+                self.local_id.private_key(), 
+                self.local_id.peer().pubkey()
+            );
+
+            self.discard_round();
+            self.primary_id = msg.signer_id().to_owned();
+
+            async_std::task::block_on(
+                self.send_to_primary(reply_msg)
+            );
+        }
+    }
+
+
+    fn confirm_epoch_cb(&mut self, msg: PbftMessage) {
+        self.new_epoch_vote_box.vote(msg.signer_id(), true);
+        if self.new_epoch_vote_box.result() == VoteResult::PASS {
+            self.discard_round();
+            self.primary_id = msg.signer_id().to_owned();
+
+            // todo: resume the request
+            // the request is send to original primary
+            // it may or maybe be shared through preprepare
+            // therefore we may need to ak for the request from its original proposal
+            self.send_request(&Self::test_msg());
+        }
     }
 
 
     fn request_timeout_cb(&mut self) {
-        todo!()
+        self.send_blame();
     }
 
 
     fn preprepare_timeout_cb(&mut self) {
-        todo!()
+        self.send_blame();
     }
 
 
     fn prepare_timeout_cb(&mut self) {
-        todo!()
+        self.send_blame();
     }
 
 
     fn discard_round(&mut self) {
-        todo!()
+        self.stage = PbftStage::IDLE;
+
+        self.prepare_vote_box.reset();
+        self.commit_vote_box.reset();
+        self.new_epoch_vote_box.reset();
+
+        // todo clear reply vote for this round
     }
 
 
     fn new_round(&mut self) {
-        todo!()
+        
+        self.round += 1;
+        self.stage = PbftStage::IDLE;
+
+        self.prepare_vote_box.reset();
+        self.commit_vote_box.reset();
+        self.blame_vote_box.reset();
+        self.new_epoch_vote_box.reset();
+    }
+
+
+    pub fn send_request(&mut self, payload: &[u8]) {
+        let mut msg = PbftMessage::new(
+            self.round,
+            self.seq(),
+            PbftMsgKind::REQUEST,
+            self.local_id.peer().clone(),
+            payload.to_vec()
+        );
+
+        msg.sign(
+            &self.signer, 
+            self.local_id.private_key(), 
+            self.local_id.peer().pubkey()
+        );
+
+        async_std::task::block_on(
+            self.send_to_primary(msg)
+        );
+
+        self.stage = PbftStage::REQUEST;
+
+        self.reset_all_timer();
+        self.request_timer.set_now();
     }
 
 
     fn send_reply(&mut self) {
-        todo!()
+        if self.stage == PbftStage::COMMIT {
+
+            let mut msg = PbftMessage::new(
+                self.round,
+                self.seq(),
+                PbftMsgKind::REPLY,
+                self.local_id.peer().clone(),
+                vec![]
+            );
+    
+            msg.sign(
+                &self.signer, 
+                self.local_id.private_key(), 
+                self.local_id.peer().pubkey()
+            );
+
+            async_std::task::block_on(
+                self.send_to_primary(msg)
+            );
+        }
+    }
+
+
+    fn send_blame(&mut self) {
+        let mut msg = PbftMessage::new(
+            self.round,
+            self.seq(),
+            PbftMsgKind::BLAME,
+            self.local_id.peer().clone(),
+            vec![]
+        );
+
+        msg.sign(
+            &self.signer, 
+            self.local_id.private_key(), 
+            self.local_id.peer().pubkey()
+        );
+
+        async_std::task::block_on(
+            self.broadcast(msg)
+        );
     }
 
 
     fn send_new_epoch(&mut self) {
-        todo!()
+        // todo: get a proof that the leader is faulty, or gather enough blames
+
+        if self.is_backup_primary() {
+
+            let mut msg = PbftMessage::new(
+                self.round,
+                self.seq(),
+                PbftMsgKind::NEW_EPOCH,
+                self.local_id.peer().clone(),
+                vec![]
+            );
+    
+            msg.sign(
+                &self.signer, 
+                self.local_id.private_key(), 
+                self.local_id.peer().pubkey()
+            );
+
+            async_std::task::block_on(
+                self.broadcast(msg)
+            );
+        }
+
     }
 
 
     fn is_backup_primary(&mut self) -> bool {
-        todo!()
+        let backup_id = self.round % self.total_node;
+        backup_id == self.total_node_set.get_idx(self.local_id.peer()).unwrap()
+    }
+
+    fn get_backup_primary(&mut self) -> Peer {
+        // determinately pick a peer from node set using current round
+        
+        let backup_id = self.round % self.total_node;
+        self.total_node_set.nth(backup_id).unwrap().to_owned()
     }
 
     async fn broadcast(&mut self, msg: PbftMessage) {
@@ -430,6 +618,16 @@ impl<S: GenericSigner> PbftContext<S> {
     fn seq(&mut self) -> u32 {
         self.seq += 1;
         self.seq
+    }
+
+
+    fn test_msg() -> Vec<u8> {
+
+        // todo: this is not an efficient way to generate bytes...
+        // for byte vec of several special size, you can use rand::gen or rand::fill
+        // find better ways
+
+        (0..PAYLOAD_MAX).map(|_| { rand::random::<u8>() }).collect()
     }
 
 }
