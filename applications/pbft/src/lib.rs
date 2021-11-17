@@ -5,6 +5,7 @@ mod pbft_message {
 mod quorum;
 mod participants;
 
+mod store;
 mod test;
 
 pub mod pbft;

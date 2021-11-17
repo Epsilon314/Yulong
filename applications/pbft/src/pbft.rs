@@ -7,6 +7,7 @@ use crate::message::{
 };
 use crate::participants::{Participants, ParticipantsStore};
 use crate::quorum::{QuorumCollector, VoteBox, VoteBoxes, VoteResult};
+use crate::store::{Store, StoreService};
 
 use log::{debug, info, warn};
 use num_derive::{FromPrimitive, ToPrimitive};
@@ -28,19 +29,19 @@ use yulong_bdn::route::AppLayerRouteUser;
 use yulong_tcp::TcpContext;
 
 
-#[derive(FromPrimitive, ToPrimitive, PartialEq, Debug, Clone, Copy)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 enum PbftStage {
-    IDLE = 8,
+    IDLE,
 
-    REQUEST = 0,
-    PRE_PREPARE = 1,
-    PREPARE = 2,
-    COMMIT = 3,
-    REPLY = 4,
+    REQUEST,
+    PRE_PREPARE,
+    PREPARE,
+    COMMIT,
+    REPLY,
 
-    BLAME = 5,
-    NEW_EPOCH = 6,
-    CONFIRM_EPOCH = 7,
+    BLAME,
+    NEW_EPOCH,
+    CONFIRM_EPOCH,
 }
 
 const PAYLOAD_MAX: usize = 500; // bytes
@@ -58,6 +59,8 @@ pub struct PbftContext<S: GenericSigner> {
 
     total_node: u32,
     total_node_set: Participants,
+
+    commit_log: Store,
 
     quorum_size: u32,
 
@@ -83,7 +86,8 @@ impl<S: GenericSigner> PbftContext<S> {
     // call this every tick
     pub fn heartbeat(&mut self) {
 
-        // todo check timeout
+        // check timeout
+        self.check_all_timer();     
 
         let msg = self.network_handle.next();
         if let Some(msg) = msg {
@@ -99,7 +103,6 @@ impl<S: GenericSigner> PbftContext<S> {
                     warn!("PbftContext::heartbeat Decode msg error: {}", error);
                 }
             }
-            
         }
     }
 
@@ -108,6 +111,26 @@ impl<S: GenericSigner> PbftContext<S> {
         self.request_timer.reset();
         self.preprepare_timer.reset();
         self.prepare_timer.reset();
+    }
+
+
+    fn check_all_timer(&mut self) {
+        
+        if self.request_timer.is_timeout() {
+            self.request_timer.reset();
+            self.request_timeout_cb();
+        }
+
+        if self.preprepare_timer.is_timeout() {
+            self.preprepare_timer.reset();
+            self.preprepare_timeout_cb();
+        }
+
+        if self.prepare_timer.is_timeout() {
+            self.prepare_timer.reset();
+            self.prepare_timeout_cb();
+        }
+
     }
 
 
@@ -122,20 +145,32 @@ impl<S: GenericSigner> PbftContext<S> {
         }
 
         match msg.msg_type() {
+
             PbftMsgKind::REQUEST => self.request_cb(msg),
-            PbftMsgKind::PRE_PREPARE => todo!(),
-            PbftMsgKind::PREPARE => todo!(),
-            PbftMsgKind::COMMIT => todo!(),
-            PbftMsgKind::REPLY => todo!(),
-            PbftMsgKind::BLAME => todo!(),
-            PbftMsgKind::NEW_EPOCH => todo!(),
-            PbftMsgKind::CONFIRM_EPOCH => todo!(),
+            
+            PbftMsgKind::PRE_PREPARE => self.prepare_cb(msg),
+            
+            PbftMsgKind::PREPARE => self.prepare_cb(msg),
+            
+            PbftMsgKind::COMMIT => self.commit_cb(msg),
+            
+            PbftMsgKind::REPLY => self.replay_cb(msg),
+            
+            PbftMsgKind::BLAME => self.blame_cb(msg),
+            
+            PbftMsgKind::NEW_EPOCH => self.new_epoch_cb(msg),
+            
+            PbftMsgKind::CONFIRM_EPOCH => self.confirm_epoch_cb(msg),
+        
         }
     }
 
 
     fn request_cb(&mut self, msg: PbftMessage) {
         if *self.local_id.peer() == self.primary_id && self.stage == PbftStage::IDLE {
+
+            self.commit_log.pending(self.round, msg.payload());
+
             let mut reply_msg = PbftMessage::new(
                 self.round,
                 self.seq(),
@@ -169,6 +204,8 @@ impl<S: GenericSigner> PbftContext<S> {
                     self.stage == PbftStage::REQUEST 
                 {
                     // everything is right
+
+                    self.commit_log.pending(self.round, msg.payload());
 
                     // do not need to include the payload since it has been
                     //  broadcasted with PRE_PREPARE msg
@@ -296,6 +333,8 @@ impl<S: GenericSigner> PbftContext<S> {
             self.stage = PbftStage::COMMIT;
             self.reset_all_timer();
 
+            self.commit_log.commit(self.round);
+
             if *self.local_id.peer() != self.primary_id {
                 self.send_reply();
                 self.new_round();
@@ -392,11 +431,24 @@ impl<S: GenericSigner> PbftContext<S> {
             self.discard_round();
             self.primary_id = msg.signer_id().to_owned();
 
-            // todo: resume the request
-            // the request is send to original primary
-            // it may or maybe be shared through preprepare
-            // therefore we may need to ak for the request from its original proposal
-            self.send_request(&Self::test_msg());
+            
+            let mut payload: Vec<u8>;
+            
+            let saved_req = self.commit_log.get_pending(self.round);
+            if saved_req.is_some() {
+                payload = saved_req.unwrap().to_vec();
+            }
+            else {
+                // todo: resume the request
+                // the request is send to original primary
+                // it may or maybe be shared through preprepare
+                // therefore we may need to ak for the request from its original proposal
+
+                // use random bytes as a temp placeholder
+                payload = Self::test_msg();
+            }
+
+            self.send_request(&payload);
         }
     }
 
@@ -459,6 +511,7 @@ impl<S: GenericSigner> PbftContext<S> {
         );
 
         self.stage = PbftStage::REQUEST;
+        self.commit_log.pending(self.round, payload);
 
         self.reset_all_timer();
         self.request_timer.set_now();

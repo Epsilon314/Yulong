@@ -84,7 +84,7 @@ impl RelayCtl for MlbtRelayCtlContext {
         // err is processed, shadow it with some
         let parse_ctl_message = parse_ctl_message.unwrap();
 
-        self.check_timers(route_ctl);   // todo: time triggered sending quests?
+        self.check_timers(route_ctl);
 
         match parse_ctl_message.msg_type() {
             
@@ -174,7 +174,8 @@ impl RelayCtl for MlbtRelayCtlContext {
     fn relay_receipt(&mut self, route_ctl: &mut RouteTable, all_success: bool) {
         
         // relay finish time
-        
+        // can be used to update self relay time consumption
+
         // todo
     }
 
@@ -215,6 +216,27 @@ impl MlbtRelayCtlContext {
                     self.join_pre_cb(route_ctl, &src, &waitfor, None, false);
                 }
             }
+
+
+            if let Some(timed_data) = 
+                self.wait_list.check(&root, WaitStateType::MERGE_WAIT)
+            {
+                if let WaitStateData::MERGE_WAIT((src, waitfor, _)) = timed_data {
+                    self.merge_wait_cb(route_ctl, &src, &waitfor, None, false);
+                }
+            }
+
+
+            if let Some(timed_data) = 
+                self.wait_list.check(&root, WaitStateType::MERGE_PRE)
+            {
+                if let WaitStateData::MERGE_PRE((src, waitfor, _)) = timed_data {
+                    self.merge_pre_cb(route_ctl, &src, &waitfor, None, false);
+                }
+            }
+
+
+            
     
             //todo
 

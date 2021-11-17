@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use prost::Message;
