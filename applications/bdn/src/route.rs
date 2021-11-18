@@ -322,7 +322,7 @@ impl RouteTable {
         }
 
 
-        // todo: fix counter
+        // NB if reaches here, insert_relay must be successful
         match self.relay_ct_per_tree.get_mut(src) {
             Some(ct_handle) => {
                 *ct_handle += 1;

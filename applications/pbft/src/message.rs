@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use prost::Message;
@@ -139,6 +137,11 @@ impl PbftMessage {
         &self.signer_id
     }
 
+    /// Get a mutable reference to the pbft message's signer id.
+    pub fn signer_id_mut(&mut self) -> &mut Peer {
+        &mut self.signer_id
+    }
+
     /// Set the pbft message's signer id.
     pub fn set_signer_id(&mut self, signer_id: Peer) {
         self.signer_id = signer_id;
@@ -163,6 +166,7 @@ impl PbftMessage {
     pub fn set_payload(&mut self, payload: Vec<u8>) {
         self.payload = payload;
     }
+
 }
 
 #[cfg(test)]

@@ -201,4 +201,9 @@ impl Peer {
     pub fn pubkey(&self) -> &PublicKey {
         &self.pubkey
     }
+
+    /// Set the peer's pubkey.
+    pub fn set_pubkey(&mut self, pubkey: &PublicKey) {
+        self.pubkey = pubkey.to_owned();
+    }
 }

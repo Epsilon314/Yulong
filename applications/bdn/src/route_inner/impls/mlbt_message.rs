@@ -19,8 +19,10 @@ use num_traits::{FromPrimitive, ToPrimitive};
 pub enum RelayMsgKind {
     JOIN = 0,
     LEAVE = 1,
+    
     ACCEPT = 2,
     REJECT = 3,
+    
     MERGE = 4,
     MERGE_CHECK = 5,
 }
