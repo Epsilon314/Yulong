@@ -1,4 +1,6 @@
 use std::cmp::min;
+use std::collections::HashMap;
+use std::hash::Hash;
 
 use crate::msg_header::MsgTypeKind;
 use crate::msg_header::RelayMethodKind;
@@ -29,7 +31,8 @@ use yulong::utils::AsBytes;
 
 
 pub struct MlbtRelayCtlContext {
-    state: MlbtState,
+    state: MlbtTermList,
+
     local_id: u64,
 
     wait_list: WaitList,
@@ -49,17 +52,17 @@ pub struct MlbtRelayCtlContext {
 
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-enum MlbtState {
+enum MlbtTerm {
     Idle,                  // uninitialized, will try to join 
-    Init(MergeSubState),   // initializing, will try to merge
+    Init(MergeSubTerm),   // initializing, will try to merge
     Wait,                  // initializing, wait for other nodes
-    Estb((JoinSubState, BalanceSubState)),    // running
+    Estb((JoinSubTerm, BalanceSubTerm)),    // running
 }
 
 
 // must in Estb
 #[derive(Debug, PartialEq, Clone, Copy)]
-enum BalanceSubState {
+enum BalanceSubTerm {
     Idle,
     
     Grant,          // plan to grant a desc, wait for receiver
@@ -73,7 +76,7 @@ enum BalanceSubState {
 
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-enum JoinSubState {
+enum JoinSubTerm {
     Idle,               // not engaged in join procedure
     Request,            // has a pending join request
     PreJoin,            // accept a join request, wait for comfirmation
@@ -81,7 +84,7 @@ enum JoinSubState {
 
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-enum MergeSubState {
+enum MergeSubTerm {
     Idle,       // initial state
     Request,    // request to merge, wait for reply
     PreMerge,  // accept a REQUEST, wait for comfirm
@@ -89,14 +92,47 @@ enum MergeSubState {
 }
 
 
+struct MlbtTermList {
+    term_by_root: HashMap<Peer, MlbtTerm>,
+}
+
+
+impl MlbtTermList {
+
+    pub fn new(route_ctl: &RouteTable) -> Self {
+        Self {
+            term_by_root: route_ctl.get_src_list().iter().fold(
+                HashMap::new(),
+                |mut init_map, s| {
+                    init_map.insert(s.to_owned(), MlbtTerm::Idle);
+                    init_map
+                }
+            )
+        }
+    }
+
+    pub fn get(&self, root: &Peer) -> Option<&MlbtTerm> {
+        self.term_by_root.get(root)
+    }
+
+    pub fn get_mut(&mut self, root: &Peer) -> Option<&mut MlbtTerm> {
+        self.term_by_root.get_mut(root)
+    }
+
+    pub fn set(&mut self, root: &Peer, v: &MlbtTerm) -> Option<MlbtTerm> {
+        self.term_by_root.insert(root.to_owned(), v.to_owned())
+    }
+
+}
+
 
 impl RelayCtl for MlbtRelayCtlContext {
 
-    fn new() -> Self {
+    fn new(route_ctl: &RouteTable) -> Self {
         Self {
             local_id: 0,
             
-            state: MlbtState::Idle,
+            state: MlbtTermList::new(route_ctl),
 
             wait_list: WaitList::new(),
 
@@ -113,6 +149,17 @@ impl RelayCtl for MlbtRelayCtlContext {
     fn bootstrap(&mut self, route_ctl: &mut RouteTable) -> Vec<(Peer, Vec<u8>)> {
         todo!()
     }
+
+
+    // // try to join
+    // fn idle_behaviour(&mut self, route_ctl: &mut RouteTable) {
+        
+    //     // simply try to join src 
+    //     if let Some(src) = route_ctl.get_best_src() {
+    //         let join_msg = self.join(&src, &src);
+    //     }
+    // }
+
 
     fn relay_ctl_callback(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
         msg: &[u8]) -> Vec<(Peer, Vec<u8>)>     
@@ -194,24 +241,25 @@ impl RelayCtl for MlbtRelayCtlContext {
 
         // check for temporal tasks
 
-        match self.state {
-            MlbtState::Idle => {
-                // try to join at INIT state
-            }
-
-            MlbtState::Init(MergeSubState::Idle) => {
-                // try to merge
-            }
-
-            MlbtState::Estb((JoinSubState::Idle, _)) => {
-                // try to rebalance
-            }
-
-            _ => {
-
+        for src in route_ctl.get_src_list() {
+            match self.state.get(&src) {
+                Some(MlbtTerm::Idle) => {
+                    // try to join at INIT state
+                }
+    
+                Some(MlbtTerm::Init(MergeSubTerm::Idle)) => {
+                    // try to merge
+                }
+    
+                Some(MlbtTerm::Estb((JoinSubTerm::Idle, _))) => {
+                    // try to rebalance
+                }
+    
+                _ => {
+    
+                }
             }
         }
-
         ret
     }
 
@@ -320,7 +368,7 @@ impl MlbtRelayCtlContext {
     {
         let join_msg = RelayMsgJoin::from_bytes(&msg.payload());
         if join_msg.is_err() {
-            warn!("MlbtRelayCtlContext::join_callback parse RelayMsgJoin failed: {}",
+            warn!("MlbtRelayCtlContext::join_cb parse RelayMsgJoin failed: {}",
                 join_msg.unwrap_err());
             // ignore ill-formed messages
             return None; 
@@ -336,9 +384,9 @@ impl MlbtRelayCtlContext {
         }
 
         // accept it
-        match self.state {
+        match self.state.get(&join_msg.src()) {
             
-            MlbtState::Estb(_) => {
+            Some(MlbtTerm::Estb(_)) => {
             
                 if self.wait_list.is_waiting(&join_msg.src()) {
 
@@ -391,12 +439,17 @@ impl MlbtRelayCtlContext {
                 ))
             }
 
-            MlbtState::Idle | MlbtState::Init(_) | MlbtState::Wait => {
+            Some(MlbtTerm::Idle) | Some(MlbtTerm::Init(_)) | Some(MlbtTerm::Wait) => {
                 // not ready to be subscribed, reject
                 Some((
                     sender.to_owned(),
                     msg.reject(self.seq())
                 ))
+            }
+
+            None => {
+                warn!("MlbtRelayCtlContext::join_cb join msg refer to an unknown root");
+                None
             }
         }
     }
@@ -593,7 +646,7 @@ impl MlbtRelayCtlContext {
         //     return None;
         // }
 
-        self.state = MlbtState::Init(MergeSubState::Request);
+        self.state.set(src, &MlbtTerm::Init(MergeSubTerm::Request));
 
         let msg_seq = self.seq();
 
@@ -662,7 +715,7 @@ impl MlbtRelayCtlContext {
 
         let merge_thrd = self.mlbt_stat.merge_thrd(&merge_msg.src());
         if merge_thrd.is_none() {
-            warn!("MlbtRelayCtlContext::merge merge_thr at root {} is unknown", &merge_msg.src());
+            warn!("MlbtRelayCtlContext::merge_cb merge_thr at root {} is unknown", &merge_msg.src());
             return None;
         }
         let merge_thrd = merge_thrd.unwrap();
@@ -688,13 +741,15 @@ impl MlbtRelayCtlContext {
             ));
         }
 
+        let crt_root_state = self.state.get_mut(&merge_msg.src());
         // can accept, check self state
-        match self.state {
+        match crt_root_state {
 
             // node is trying to merge, will accept and pre for comfirmation
-            MlbtState::Init(MergeSubState::Idle) => {
+            Some(MlbtTerm::Init(MergeSubTerm::Idle)) => {
 
-                self.state = MlbtState::Init(MergeSubState::PreMerge);
+                let handle = crt_root_state.unwrap();
+                *handle = MlbtTerm::Init(MergeSubTerm::PreMerge);
 
                 // todo!
                 self.wait_list.set(
@@ -712,7 +767,9 @@ impl MlbtRelayCtlContext {
                 ))
             }
 
-            MlbtState::Idle | MlbtState::Estb(_) | MlbtState::Wait | MlbtState::Init(_) => {
+            Some(MlbtTerm::Idle) | Some(MlbtTerm::Estb(_)) | Some(MlbtTerm::Wait)
+                | Some(MlbtTerm::Init(_)) => 
+            {
                 // not in mergeable state, reject
 
                 Some((
@@ -720,6 +777,11 @@ impl MlbtRelayCtlContext {
                     msg.reject(self.seq())
                 ))
 
+            }
+
+            None => {
+                warn!("MlbtRelayCtlContext::merge_cb Unknown src");
+                None
             }
         }
     }
@@ -787,7 +849,11 @@ impl MlbtRelayCtlContext {
                 route_ctl.insert_front_relay(src, waitfor);
             }
             else {
-                self.state = MlbtState::Wait;
+
+                // cannot be None if reaches here
+                let handle = self.state.get_mut(src).unwrap();
+                *handle = MlbtTerm::Wait;
+
                 route_ctl.reg_delegate(src, waitfor);
             }
         }
@@ -850,8 +916,8 @@ impl MlbtRelayCtlContext {
 
         // todo check self is src
 
-        match self.state {
-            MlbtState::Init(_) => {
+        match self.state.get(&route_ctl.local_id()).unwrap() {
+            MlbtTerm::Init(_) => {
                 let nw = merge_msg.weight();
                 
                 // if cw cannot unwrap, either route table is wrong or remote
@@ -888,9 +954,11 @@ impl MlbtRelayCtlContext {
         // clear timer
         self.wait_list.clear(src, WaitStateType::MergeCheck);
 
+        let handle = self.state.get_mut(src).unwrap();
+
         if accepted {
             // accepted, can merge with merge_target
-            self.state = MlbtState::Init(MergeSubState::Idle);
+            *handle = MlbtTerm::Init(MergeSubTerm::Idle);
             let comfirm_msg = RelayCtlMessage::new(
                 RelayMsgKind::ACCEPT,
                 self.seq(), 
@@ -900,7 +968,7 @@ impl MlbtRelayCtlContext {
         }
         else {
             // give up merge process
-            self.state = MlbtState::Init(MergeSubState::Idle);
+            *handle = MlbtTerm::Init(MergeSubTerm::Idle);
             
             // todo: update merge metric 
 
@@ -931,10 +999,10 @@ impl MlbtRelayCtlContext {
     fn check_grant(&mut self, src: &Peer, route_ctl: &mut RouteTable) {
 
         todo!();
+        
+
         for desc in route_ctl.get_relay(src) {
-
             
-
         }
     }
 
