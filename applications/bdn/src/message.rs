@@ -352,6 +352,60 @@ impl Display for OverlayMessage {
     }
 }
 
+pub struct MsgWithPriority {
+    pri: u32,
+    dst: Peer,
+    msg: OverlayMessage,
+}
+
+
+impl PartialEq for MsgWithPriority {
+    fn eq(&self, other: &Self) -> bool {
+        self.pri == other.pri
+    }
+}
+
+
+impl PartialOrd for MsgWithPriority {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.pri.partial_cmp(&other.pri)
+    }
+}
+
+impl Eq for MsgWithPriority {}
+
+
+impl Ord for MsgWithPriority {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.pri.cmp(&other.pri)
+    }
+}
+
+
+impl MsgWithPriority {
+    pub fn new(dst: &Peer, pri: u32, msg: OverlayMessage) -> Self {
+        Self { 
+            pri,
+            dst: dst.to_owned(),
+            msg
+        }
+    }
+
+    pub fn dst(&self) -> &Peer {
+        &self.dst
+    }
+
+
+    pub fn msg(&self) -> &OverlayMessage {
+        &self.msg
+    }
+
+    /// Get a mutable reference to the msg with priority's msg.
+    pub fn msg_mut(&mut self) -> &mut OverlayMessage {
+        &mut self.msg
+    }
+}
+
 
 #[cfg(test)]
 mod test {

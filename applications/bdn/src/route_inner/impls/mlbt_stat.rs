@@ -1,21 +1,31 @@
 use std::collections::HashMap;
 use yulong_network::identity::Peer;
 
+const DELAY_AVERAGE_WD: u32 = 10;
 
 // query and update mlbt stat
 // mlbt stat:
-// src_inv: interval between root start -> finish relaying
+
+// src_inv: interval between root start -> self finish relaying
 // relay_inv: interval between recv -> all desc recv
 pub trait MlbtStatMaintainer {
 
     fn src_inv(&self, tr: &Peer) -> Option<u64>;
-
     fn relay_inv(&self, tr: &Peer) -> Option<u64>;
+
+    fn src_inv_desc(&self, tr: &Peer, query: &Peer) -> Option<u64>;
+    fn relay_inv_desc(&self, tr: &Peer, query: &Peer) -> Option<u64>;
+
+    // moving average delay by timestamping
+    fn delay_ts(&self, peer: &Peer) -> Option<u64>;
 
     fn merge_thrd(&self, tr: &Peer) -> Option<u64>;
 
     fn insert_default(&mut self, tr: &Peer);
 
+
+    fn roll_update_delay_ts(&mut self, peer: &Peer, new_delay: u64);
+     
     // todo: 
     
     // src_inv update cb
@@ -34,9 +44,16 @@ pub trait MlbtStatDebug {
     
     fn set_relay_inv(&mut self, tr: &Peer, _: u64) -> Option<()>;
 
+    fn set_src_inv_desc(&mut self, tr: &Peer, query: &Peer, _: u64) -> Option<()>;
+
+    fn set_relay_inv_desc(&mut self, tr: &Peer, query: &Peer, _: u64) -> Option<()>;
+
+    fn set_delay_ts(&mut self, query: &Peer, _: u64) -> Option<()>;
+
 }
 
 
+// self stat 
 struct MlbtStat {
     src_inv: u64,
     relay_inv: u64,
@@ -44,8 +61,18 @@ struct MlbtStat {
 }
 
 
+struct NeighbourStat {
+    delay_ts: u64,
+}
+
+
 pub struct MlbtStatList {
-    inner_list: HashMap<Peer, MlbtStat>
+
+    // self stat in each tree
+    inner_list: HashMap<Peer, MlbtStat>,
+
+    neighbour_list: HashMap<Peer, NeighbourStat>,
+
 }
 
 
@@ -67,7 +94,8 @@ impl MlbtStatList {
 
     pub fn new() -> Self {
         Self {
-            inner_list: HashMap::new()
+            inner_list: HashMap::new(),
+            neighbour_list: HashMap::new(),
         }
     }
 }
@@ -88,6 +116,16 @@ impl MlbtStatMaintainer for MlbtStatList {
         }
     }
 
+    fn src_inv_desc(&self, tr: &Peer, query: &Peer) -> Option<u64> {
+        todo!()
+    }
+
+    
+    fn relay_inv_desc(&self, tr: &Peer, query: &Peer) -> Option<u64> {
+        todo!()
+    }
+
+
     fn merge_thrd(&self, tr: &Peer) -> Option<u64> {
         match self.inner_list.get(tr) {
             Some(stat) => Some(stat.merge_thrd),
@@ -98,6 +136,26 @@ impl MlbtStatMaintainer for MlbtStatList {
     fn insert_default(&mut self, tr: &Peer) {
         todo!()
     }
+
+
+    fn delay_ts(&self, peer: &Peer) -> Option<u64> {
+        match self.neighbour_list.get(peer) {
+            Some(stat) => Some(stat.delay_ts),
+            None => None,
+        }
+    }
+
+
+    fn roll_update_delay_ts(&mut self, peer: &Peer, new_delay: u64) {
+        match self.neighbour_list.get_mut(peer) {
+            Some(stat) => {
+                (*stat).delay_ts = (stat.delay_ts * (DELAY_AVERAGE_WD as u64 - 1)
+                    + new_delay) / DELAY_AVERAGE_WD as u64;
+            }
+            _ => {}
+        }
+    }
+
 }
 
 
@@ -124,5 +182,17 @@ impl MlbtStatDebug for MlbtStatList {
                 None
             }
         }
+    }
+
+    fn set_src_inv_desc(&mut self, tr: &Peer, query: &Peer, _: u64) -> Option<()> {
+        todo!()
+    }
+
+    fn set_relay_inv_desc(&mut self, tr: &Peer, query: &Peer, _: u64) -> Option<()> {
+        todo!()
+    }
+
+    fn set_delay_ts(&mut self, query: &Peer, _: u64) -> Option<()> {
+        todo!()
     }
 }

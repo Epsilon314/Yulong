@@ -6,6 +6,7 @@ use yulong_network::{identity::Me, identity::Peer, transport::Transport};
 
 use std::{
     collections::HashMap,
+    collections::BinaryHeap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::mpsc,
     time::Duration,
@@ -17,7 +18,7 @@ use log::{debug, info, warn};
 use crate::common::{MessageWithIp, SocketAddrBi};
 use crate::configs::{DEFAULT_BDN_PORT, MSG_MAXLEN};
 use crate::{
-    message::{self, OverlayMessage},
+    message::{self, OverlayMessage, MsgWithPriority},
     msg_header::MsgTypeKind,
     route::AppLayerRouteUser,
     route::Route,
@@ -36,6 +37,9 @@ pub struct BDN<T: Transport, R: RelayCtl + Send + Sync> {
     #[allow(dead_code)]
     msg_sender: mpsc::Sender<MessageWithIp>,
     msg_receiver: mpsc::Receiver<MessageWithIp>,
+
+    use_send_buffer: bool,
+    send_buffer: BinaryHeap::<MsgWithPriority>,
 
     route: Route<R>,
 
@@ -62,6 +66,8 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
             w_stream: HashMap::<Peer, <T as Transport>::Stream>::new(),
             msg_sender: sender,
             msg_receiver: receiver,
+            use_send_buffer: true,
+            send_buffer: BinaryHeap::new(),
             route: Route::new(&id.peer()),
             heartbeat_timer: timer,
         }
@@ -122,6 +128,21 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
         }
     }
 
+
+    // choose block send or buffered send according to config
+    pub fn send_to_auto(&mut self, dst: &Peer, msg: &mut message::OverlayMessage, pri: Option<u32>) {
+        if self.use_send_buffer {
+            self.send_to_buffered(dst, msg, pri.unwrap())
+        }
+        else {
+            async_std::task::block_on(
+                self.send_to(dst, msg)
+            );
+        }
+    }
+
+
+    // async send
     pub async fn send_to(&mut self, dst: &Peer, msg: &mut message::OverlayMessage) {
         // allow fail
         msg.set_timestamp_now();
@@ -172,6 +193,33 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
             }
         }
     }
+
+
+    // buffered send
+    pub fn send_to_buffered(&mut self, dst: &Peer, msg: &mut message::OverlayMessage, pri: u32) {
+        self.send_buffer.push(MsgWithPriority::new(dst, pri, msg.to_owned()));
+    }
+
+
+    // send one buffered msg
+    pub fn send_buffered_once(&mut self) {
+        if let Some(send_task) = self.send_buffer.pop() {
+            async_std::task::block_on(
+                self.send_to(send_task.dst(), &mut send_task.msg().to_owned())
+            );
+        }
+    }
+
+
+    // flush send buffer
+    pub fn flush_send_buffer(&mut self) {
+        while let Some(send_task) = self.send_buffer.pop() {
+            async_std::task::block_on(
+                self.send_to(send_task.dst(), &mut send_task.msg().to_owned())
+            );
+        }
+    }
+
 
     pub async fn relay_on(&mut self, src: &Peer, msg: &mut message::OverlayMessage) {
         let relay_list = self.route.get_relay(&src);
@@ -292,6 +340,9 @@ impl<T: Transport, R: RelayCtl + Send + Sync> Iterator for BDN<T, R> {
 
         // relay module will take a clone in case it changes the message before relaying it
         self.relay_handler(incoming_msg.clone());
+
+        // todo: flush policy
+        self.flush_send_buffer();
 
         // dispatch messages
         match incoming_msg.get_type() {

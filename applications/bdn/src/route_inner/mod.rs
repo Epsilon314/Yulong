@@ -12,7 +12,7 @@ use crate::msg_header::RelayMethodKind;
 /// message is defined by concrete implementations, thus declared as bytes.
 pub trait RelayCtl: Send{
 
-    fn new() -> Self;
+    fn new(route_ctl: &RouteTable) -> Self;
 
     fn get_relay_method(&self) -> RelayMethodKind;
 
@@ -36,7 +36,7 @@ pub trait RelayCtl: Send{
 /// message is defined by concrete implementations, thus declared as bytes.
 pub trait PathCtl {
 
-    fn new() -> Self;
+    fn new(route_ctl: &RouteTable) -> Self;
 
     fn bootstrap(route_ctl: &mut RouteTable) -> Vec<(Peer, Vec<u8>)>;
 

@@ -103,6 +103,7 @@ impl Ord for PeerWithDis {
     }
 }
 
+#[derive(Clone)]
 pub struct RouteTable {
 
     local_id: Peer,
@@ -157,11 +158,13 @@ impl RouteTable {
 impl<R: RelayCtl> Route<R> {
 
     pub fn new(local: &Peer) -> Self {
+        
+        let route_table = RouteTable::new(local);
+
         Self {
-            route_table: RouteTable::new(local),
 
-            relay_mod: R::new(),
-
+            relay_mod: R::new(&route_table),
+            route_table,
             netstat: NetStat::new(),
         }
     }
