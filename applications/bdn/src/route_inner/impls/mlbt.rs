@@ -1,7 +1,11 @@
 use std::cmp::min;
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    BinaryHeap
+};
 use std::hash::Hash;
 
+use crate::message::OverlayMessage;
 use crate::msg_header::MsgTypeKind;
 use crate::msg_header::RelayMethodKind;
 
@@ -20,7 +24,7 @@ use log::debug;
 use log::warn;
 use yulong_network::identity::Peer;
 
-use super::mlbt_message::RelayMsgMerge;
+use super::mlbt_message::{RelayMsgMerge, RelayMsgGrant};
 use super::mlbt_message::RelayMsgMergeCheck;
 use super::mlbt_message::{RelayCtlMessage, RelayMsgJoin,
     RelayMsgLeave, RelayMsgAccept, RelayMsgReject};
@@ -627,6 +631,11 @@ impl MlbtRelayCtlContext {
                     self.merge_ck_res_cb(route_ctl, &src, &merge_target, confirm_id, id, pos);
                     return ret;
                 }
+                
+                WaitStateData::GrantWait(_) => todo!(),
+                WaitStateData::GrantJoin(_) => todo!(),
+                WaitStateData::RetractWait(_) => todo!(),
+                WaitStateData::RetractJoin(_) => todo!(),
             }
         }
         
@@ -866,7 +875,19 @@ impl MlbtRelayCtlContext {
     fn merge_pre_timeout_cb(&mut self, route_ctl: &mut RouteTable, src: &Peer,
         waitfor: &Peer)
     {
-        //todo
+        debug!("MlbtRelayCtlContext::merge_pre_timeout_cb timeout");
+
+        // clear timer
+        self.wait_list.clear(src, WaitStateType::MergePre);
+
+        // reset state
+        let state_handle = self.state.get_mut(src).unwrap();
+        match state_handle {
+            MlbtTerm::Init(MergeSubTerm::PreMerge) => {
+                *state_handle = MlbtTerm::Init(MergeSubTerm::Idle);
+            }
+            _ => unreachable!()
+        }
     }
 
 
@@ -991,23 +1012,173 @@ impl MlbtRelayCtlContext {
     }
 
 
-    fn check_balance(&mut self) {
+    fn try_balance(&mut self) {
         todo!()
     }
     
     // check grant condition on each given root
-    fn check_grant(&mut self, src: &Peer, route_ctl: &mut RouteTable) {
+    fn try_grant(&mut self, src: &Peer, route_ctl: &mut RouteTable)
+        -> Option<(Peer, RelayCtlMessage)> 
+    {
 
-        todo!();
+        // todo 
+
+        let desc_list = route_ctl.get_relay(src);
+        let mut desc_heap: BinaryHeap<PeerWithWeight> = desc_list.iter().fold(BinaryHeap::new(), 
+            |mut acc, p| {
+                acc.push(PeerWithWeight::new(p, &self.mlbt_stat));
+                acc
+            });
+
+        let oi = self.mlbt_stat.src_inv(src)?;
         
+        while let Some(g) = desc_heap.pop() {
+            for desc in route_ctl.get_relay(src) {
+                
+                if *g.peer() == desc {continue;}
 
-        for desc in route_ctl.get_relay(src) {
-            
-        }
+                let oj = self.mlbt_stat.src_inv_desc(src, &desc)?;
+                let dim = self.mlbt_stat.delay_ts(g.peer())?;
+
+
+                // todo 
+                if oi + oj > dim {
+
+                    // grant g to desc
+
+                    // todo: timed data
+                    self.state.set(src,
+                        &MlbtTerm::Estb((JoinSubTerm::Idle, BalanceSubTerm::Grant))
+                    );
+
+                    return Some((
+                        desc,
+                        RelayCtlMessage::new(
+                            RelayMsgKind::GRANT,
+                            self.seq(),
+                            RelayMsgGrant::new(
+                                g.peer,
+                                oi,
+                                src
+                            )
+                        )
+                    ));
+                }
+                else {
+                    // do not fit grant condition
+                    // continue
+                }
+            }
+        } 
+        // no feasible grant
+        None
     }
 
-    fn check_retract(&mut self, src: &Peer, route_ctl: &mut RouteTable) {
-        todo!()
+    fn try_retract(&mut self, src: &Peer, route_ctl: &mut RouteTable) 
+        -> Option<(Peer, RelayCtlMessage)> 
+    {
+        // todo 
+
+        let desc_list = route_ctl.get_relay(src);
+        let min_weight_peer: PeerWithWeight = desc_list.iter().fold(
+            PeerWithWeight{peer: Peer::BROADCAST_ID, weight: u64::max_value()}, 
+            |mut acc, p| {
+                let pw = PeerWithWeight::new(p, &self.mlbt_stat);
+                if acc.weight() > pw.weight() {
+                    acc = pw;
+                }
+                acc
+            });
+
+        let oi = self.mlbt_stat.src_inv(src)?;
+        
+        for desc in route_ctl.get_relay(src) {
+
+            let oj = self.mlbt_stat.src_inv_desc(src, &desc)?;
+
+            // use self's lightest node's delay as a estimation (but why?)
+            let dim = self.mlbt_stat.delay_ts(min_weight_peer.peer())?;
+
+            // todo 
+            if oj - oi > dim {
+
+                // try retrive from desc
+
+                // todo: timed data
+                // self.state.set(src,
+                //     &MlbtTerm::Estb((JoinSubTerm::Idle, BalanceSubTerm::Grant))
+                // );
+
+                // return Some((
+                //     desc,
+                //     RelayCtlMessage::new(
+                //         RelayMsgKind::GRANT,
+                //         self.seq(),
+                //         RelayMsgGrant::new(
+                //             g.peer,
+                //             oi,
+                //             src
+                //         )
+                //     )
+                // ));
+            }
+            else {
+                // do not fit grant condition
+                // continue
+            }
+        } 
+        // no feasible grant
+        None
     }
 
 }
+
+
+struct PeerWithWeight {
+    peer: Peer,
+    weight: u64
+}
+
+
+impl PeerWithWeight {
+    pub fn new(p: &Peer, stat: &MlbtStatList) -> Self {
+        Self {
+            peer: p.to_owned(),
+            weight: stat.relay_inv(p).unwrap()
+        }
+    }
+
+
+    /// Get a reference to the peer with weight's peer.
+    fn peer(&self) -> &Peer {
+        &self.peer
+    }
+
+    /// Get a reference to the peer with weight's weight.
+    fn weight(&self) -> u64 {
+        self.weight
+    }
+}
+
+
+impl PartialOrd for PeerWithWeight {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        other.weight.partial_cmp(&self.weight)
+    }
+}
+
+
+impl Ord for PeerWithWeight {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.weight.cmp(&other.weight)
+    }
+}
+
+
+impl PartialEq for PeerWithWeight {
+    fn eq(&self, other: &Self) -> bool {
+        self.weight == other.weight
+    }
+}
+
+impl Eq for PeerWithWeight {}

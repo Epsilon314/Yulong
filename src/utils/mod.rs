@@ -63,4 +63,25 @@ impl CasualTimer {
         }
     }
 
+
+    pub fn escaped(&self) -> Option<u128> {
+        match self.last_seen {
+
+            Some(earlier) => {
+                let escaped = SystemTime::now().duration_since(earlier);
+                if escaped.is_err() {
+                    warn!("CasualTimer::escaped clock go backwards {}", 
+                        escaped.unwrap_err());
+                    return None;
+                }
+                Some(escaped.unwrap().as_millis())
+            }
+
+            None => {
+                warn!("CasualTimer::escaped Timer is not sent thus cannot timeout");
+                None
+            }
+        }
+    }
+
 }

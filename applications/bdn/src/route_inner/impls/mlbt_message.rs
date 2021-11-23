@@ -25,6 +25,10 @@ pub enum RelayMsgKind {
     
     MERGE = 4,
     MERGE_CHECK = 5,
+
+    GRANT = 6,
+    GRANT_INFO = 7,
+
 }
 
 
@@ -420,6 +424,67 @@ impl RelayMsgMergeCheck {
     pub fn weight(&self) -> u64 {
         self.weight
     }
+}
+
+
+#[derive(Debug)]
+pub struct RelayMsgGrant {
+    grant_id: Peer,
+    src_inv: u64,
+    src_id: Peer,
+}
+
+
+impl AsBytes for RelayMsgGrant {
+    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
+        todo!()
+    }
+
+    fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
+        todo!()
+    }
+}
+
+
+impl RelayMsgGrant {
+    pub fn new(grant_id: Peer, src_inv: u64, src_id: &Peer) -> Self {
+        Self { 
+            grant_id,
+            src_inv,
+            src_id: src_id.to_owned()
+        }
+    }
+
+    /// Get a reference to the relay msg grant's grant id.
+    pub fn grant_id(&self) -> &Peer {
+        &self.grant_id
+    }
+
+    /// Get a reference to the relay msg grant's src inv.
+    pub fn src_inv(&self) -> u64 {
+        self.src_inv
+    }
+}
+
+
+pub struct RelayMsgGrantInfo {
+    
+}
+
+
+impl AsBytes for RelayMsgGrantInfo {
+    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
+        todo!()
+    }
+
+    fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
+        todo!()
+    }
+}
+
+
+impl RelayMsgGrantInfo {
+
 }
 
 

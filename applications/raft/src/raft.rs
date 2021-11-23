@@ -33,3 +33,8 @@ pub struct RaftContext {
     vs: VolatileState,
     vss: VolatileStateServer,
 }
+
+
+impl RaftContext {
+    
+}

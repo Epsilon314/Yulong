@@ -12,7 +12,12 @@ pub enum WaitStateData {
     MergePre((Peer, Peer, u64)), // src, requirer, ack msg id
 
     // src, merge target, accept request msg id, require msg id
-    MergeCheck((Peer, Peer, u64, u64)), 
+    MergeCheck((Peer, Peer, u64, u64)),
+    GrantWait((Peer, Peer, u64)), // src, receiver, request msg id
+    GrantJoin((Peer, Peer, u64)), // src, recv, join msg id
+
+    RetractWait((Peer, Peer, u64)), // src, recv, request msg id
+    RetractJoin((Peer, Peer, u64)), // src, recv, request msg id
 }
 
 
@@ -123,6 +128,10 @@ impl WaitState {
                     inner: WaitStateData::MergeCheck(data),
                 };
             },
+            WaitStateData::GrantWait(_) => todo!(),
+            WaitStateData::GrantJoin(_) => todo!(),
+            WaitStateData::RetractWait(_) => todo!(),
+            WaitStateData::RetractJoin(_) => todo!(),
         }
 
         ret.wait_timer.set_now();
@@ -293,6 +302,10 @@ impl TimedStatesSingle for WaitStats {
             WaitStateData::MergeCheck(_) => {
                 self.merge_check = Some(WaitState::new(state))
             }
+            WaitStateData::GrantWait(_) => todo!(),
+            WaitStateData::GrantJoin(_) => todo!(),
+            WaitStateData::RetractWait(_) => todo!(),
+            WaitStateData::RetractJoin(_) => todo!(),
         }
     }
 

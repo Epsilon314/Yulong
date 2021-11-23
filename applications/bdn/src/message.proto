@@ -29,3 +29,9 @@ message mlbt_merge {
 message mlbt_merge_check {
     uint64 weight = 1;
 }
+
+message mlbt_grant {
+    bytes grant_id = 1;
+    uint64 src_inv = 2;
+    bytes src_id = 3;
+}
