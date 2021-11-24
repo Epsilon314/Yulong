@@ -13,6 +13,7 @@ pub enum WaitStateData {
 
     // src, merge target, accept request msg id, require msg id
     MergeCheck((Peer, Peer, u64, u64)),
+    
     GrantWait((Peer, Peer, u64)), // src, receiver, request msg id
     GrantJoin((Peer, Peer, u64)), // src, recv, join msg id
 
@@ -28,6 +29,10 @@ pub enum WaitStateType {
     MergeWait,
     MergePre,
     MergeCheck,
+    GrantWait,
+    GrantJoin,
+    RetractWait,
+    RetractJoin,
 }
 
 // todo: initial from config 
@@ -202,6 +207,10 @@ impl TimedStatesSingle for WaitStats {
                     None => None
                 }
             }
+            WaitStateType::GrantWait => todo!(),
+            WaitStateType::GrantJoin => todo!(),
+            WaitStateType::RetractWait => todo!(),
+            WaitStateType::RetractJoin => todo!(),
         }
     }
 
@@ -277,6 +286,10 @@ impl TimedStatesSingle for WaitStats {
                     None => None
                 }
             }
+            WaitStateType::GrantWait => todo!(),
+            WaitStateType::GrantJoin => todo!(),
+            WaitStateType::RetractWait => todo!(),
+            WaitStateType::RetractJoin => todo!(),
         }
     }
 
@@ -331,6 +344,10 @@ impl TimedStatesSingle for WaitStats {
             WaitStateType::MergeCheck => {
                 self.merge_check = None
             }
+            WaitStateType::GrantWait => todo!(),
+            WaitStateType::GrantJoin => todo!(),
+            WaitStateType::RetractWait => todo!(),
+            WaitStateType::RetractJoin => todo!(),
         }
     }
 
