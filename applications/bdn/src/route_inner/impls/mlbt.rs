@@ -11,6 +11,7 @@ use crate::msg_header::RelayMethodKind;
 
 use crate::route::{AppLayerRouteUser, RouteTable, AppLayerRouteInner};
 
+use crate::route_inner::impls::mlbt_message::RelayMsgGrantInfo;
 use crate::route_inner::{
     RelayCtl,
     impls::{
@@ -24,7 +25,7 @@ use log::debug;
 use log::warn;
 use yulong_network::identity::Peer;
 
-use super::mlbt_message::{RelayMsgMerge, RelayMsgGrant};
+use super::mlbt_message::{RelayMsgMerge, RelayMsgGrant, RelayMsgRetract};
 use super::mlbt_message::RelayMsgMergeCheck;
 use super::mlbt_message::{RelayCtlMessage, RelayMsgJoin,
     RelayMsgLeave, RelayMsgAccept, RelayMsgReject};
@@ -42,6 +43,8 @@ pub struct MlbtRelayCtlContext {
     wait_list: WaitList,
 
     mlbt_stat: MlbtStatList,
+
+    grant_prev: bool,
 }
 
 
@@ -141,6 +144,8 @@ impl RelayCtl for MlbtRelayCtlContext {
             wait_list: WaitList::new(),
 
             mlbt_stat: MlbtStatList::new(),
+
+            grant_prev: false,
         }
     }
 
@@ -360,7 +365,7 @@ impl MlbtRelayCtlContext {
             RelayCtlMessage::new(
                 RelayMsgKind::JOIN,
                 req_seq,
-                RelayMsgJoin::new(src)
+                RelayMsgJoin::new(src.to_owned())
             )
         ))
     }
@@ -684,7 +689,7 @@ impl MlbtRelayCtlContext {
             RelayMsgMerge::new(
                 weight,
                 merge_thrd,
-                src
+                src.to_owned(),
             )
         )))
     }
@@ -1012,9 +1017,18 @@ impl MlbtRelayCtlContext {
     }
 
 
-    fn try_balance(&mut self) {
-        todo!()
+    fn try_balance(&mut self, src: &Peer, route_ctl: &mut RouteTable) 
+        -> Option<(Peer, RelayCtlMessage)> 
+    {
+        self.grant_prev = !self.grant_prev;
+        if self.grant_prev {
+            self.try_grant(src, route_ctl)
+        }
+        else {
+            self.try_retract(src, route_ctl)
+        }
     }
+    
     
     // check grant condition on each given root
     fn try_grant(&mut self, src: &Peer, route_ctl: &mut RouteTable)
@@ -1059,7 +1073,7 @@ impl MlbtRelayCtlContext {
                             RelayMsgGrant::new(
                                 g.peer,
                                 oi,
-                                src
+                                src.to_owned(),
                             )
                         )
                     ));
@@ -1073,6 +1087,7 @@ impl MlbtRelayCtlContext {
         // no feasible grant
         None
     }
+
 
     fn try_retract(&mut self, src: &Peer, route_ctl: &mut RouteTable) 
         -> Option<(Peer, RelayCtlMessage)> 
@@ -1091,13 +1106,12 @@ impl MlbtRelayCtlContext {
             });
 
         let oi = self.mlbt_stat.src_inv(src)?;
+        // use self's lightest node's delay as a estimation (but why?)
+        let dim = self.mlbt_stat.delay_ts(min_weight_peer.peer())?;
         
         for desc in route_ctl.get_relay(src) {
 
             let oj = self.mlbt_stat.src_inv_desc(src, &desc)?;
-
-            // use self's lightest node's delay as a estimation (but why?)
-            let dim = self.mlbt_stat.delay_ts(min_weight_peer.peer())?;
 
             // todo 
             if oj - oi > dim {
@@ -1105,22 +1119,22 @@ impl MlbtRelayCtlContext {
                 // try retrive from desc
 
                 // todo: timed data
-                // self.state.set(src,
-                //     &MlbtTerm::Estb((JoinSubTerm::Idle, BalanceSubTerm::Grant))
-                // );
+                self.state.set(src,
+                    &MlbtTerm::Estb((JoinSubTerm::Idle, BalanceSubTerm::Retract))
+                );
 
-                // return Some((
-                //     desc,
-                //     RelayCtlMessage::new(
-                //         RelayMsgKind::GRANT,
-                //         self.seq(),
-                //         RelayMsgGrant::new(
-                //             g.peer,
-                //             oi,
-                //             src
-                //         )
-                //     )
-                // ));
+                return Some((
+                    desc,
+                    RelayCtlMessage::new(
+                        RelayMsgKind::RETRACT,
+                        self.seq(),
+                        RelayMsgRetract::new(
+                            src.to_owned(),
+                            dim,
+                            oi
+                        ),
+                    )
+                ));
             }
             else {
                 // do not fit grant condition
@@ -1129,6 +1143,145 @@ impl MlbtRelayCtlContext {
         } 
         // no feasible grant
         None
+    }
+
+
+    // cb for receiving a grant message
+    fn grant_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
+        msg: &RelayCtlMessage) -> Vec<(Peer, RelayCtlMessage)>
+    {
+        let mut ret: Vec<(Peer, RelayCtlMessage)> = vec![];
+
+        // decode merge request
+        let grant_msg = RelayMsgGrant::from_bytes(&msg.payload());
+        if grant_msg.is_err() {
+            warn!("MlbtRelayCtlContext::grant_cb parse RelayMsgGrant failed: {}",
+            grant_msg.unwrap_err());
+
+            // ignore ill-formed messages
+            return ret; 
+        }
+        let grant_msg = grant_msg.unwrap();
+
+        let oj = grant_msg.src_inv();
+
+        let oi = match self.mlbt_stat.src_inv(grant_msg.src_id()) {
+            Some(val) => val,
+            None => {
+                return ret;
+            }
+        };
+        
+        let dim = match self.mlbt_stat.delay_ts(grant_msg.grant_id()) {
+            Some(val) => val,
+            None => {
+                return ret;
+            }
+        };
+
+        if oi - oj > dim {
+            // accept
+            
+            // ack to requester
+
+            ret.push((
+                sender.to_owned(),
+                msg.accept(self.seq())
+            ));
+
+            // grant info to grantee
+            ret.push((
+                grant_msg.grant_id().to_owned(),
+                RelayCtlMessage::new(
+                    RelayMsgKind::GRANT_INFO,
+                    self.seq(),
+                    RelayMsgGrantInfo::new(
+                        grant_msg.src_id().to_owned(),
+                    ),
+                )
+            ));
+
+        }
+        else {
+            //reject
+            ret.push((
+                sender.to_owned(),
+                msg.reject(self.seq())
+            ));
+        }
+
+        ret
+    }
+
+
+    // cb wait for reply to previous grant request
+    fn grant_wait_cb(&mut self, route_ctl: &mut RouteTable, src: &Peer, accepted: bool) {
+        
+        self.wait_list.clear(src, WaitStateType::GrantWait);
+        if accepted {
+            debug!("MlbtRelayCtlContext::grant_wait_cb agreed");
+            // todo: stay in balancing state until leave
+        }
+        else {
+            debug!("MlbtRelayCtlContext::grant_wait_cb rejected");
+            // todo: mark as rejected and do not retry it for a while
+        }
+
+    }
+
+
+    // cb for an incoming grant info
+    fn grant_info_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
+        msg: &RelayCtlMessage) -> Option<(Peer, RelayCtlMessage)> 
+    {
+        // decode merge request
+        let info_msg = RelayMsgGrantInfo::from_bytes(&msg.payload());
+        if info_msg.is_err() {
+            warn!("MlbtRelayCtlContext::grant_info_cb parse RelayMsgGrantInfo failed: {}",
+            info_msg.unwrap_err());
+
+            // ignore ill-formed messages
+            return None; 
+        }
+        let info_msg = info_msg.unwrap();
+
+        // todo
+
+        match self.state.get(info_msg.src_id()) {
+
+            // not engaged in other balancing procedure
+            Some(MlbtTerm::Estb((_, BalanceSubTerm::Idle))) => Some((
+                sender.to_owned(), 
+                msg.accept(self.seq())
+            )),
+
+            _ => Some((
+                sender.to_owned(), 
+                msg.reject(self.seq())
+            )),
+        }
+    }
+    
+
+    // cb for reply to previous join request related to grant procedure
+    fn grant_join_cb(&mut self, route_ctl: &mut RouteTable) 
+        -> Option<(Peer, RelayCtlMessage)> 
+    {
+        todo!();
+    }
+
+
+    fn retract_cb(&mut self, route_ctl: &mut RouteTable) 
+        -> Option<(Peer, RelayCtlMessage)> 
+    {
+        todo!();
+    }
+
+
+    fn retract_join_cb(&mut self, route_ctl: &mut RouteTable) 
+        -> Option<(Peer, RelayCtlMessage)> 
+    {
+        todo!();
     }
 
 }
