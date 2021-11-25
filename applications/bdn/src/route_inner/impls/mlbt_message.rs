@@ -16,6 +16,7 @@ use yulong_network::identity::Peer;
 
 use num_traits::{FromPrimitive, ToPrimitive};
 
+#[allow(non_camel_case_types)]
 #[derive(FromPrimitive, ToPrimitive, Clone, Copy, Debug)]
 pub enum RelayMsgKind {
     JOIN = 0,
@@ -632,6 +633,9 @@ impl RelayMsgRetractInfo {
         self.src_inv
     }
 }
+
+
+
 
 
 #[cfg(test)]
