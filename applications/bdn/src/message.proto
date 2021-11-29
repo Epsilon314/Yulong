@@ -31,7 +31,22 @@ message mlbt_merge_check {
 }
 
 message mlbt_grant {
-    bytes grant_id = 1;
+    bytes target_id = 1;
     uint64 src_inv = 2;
     bytes src_id = 3;
+}
+
+message mlbt_grant_info {
+    bytes src_id = 1;
+}
+
+message mlbt_retract {
+    bytes src_id = 1;
+    uint64 relay_inv = 2;
+}
+
+
+message mlbt_retract_reply {
+    bytes src_id = 1;
+    bytes target_id = 2;
 }

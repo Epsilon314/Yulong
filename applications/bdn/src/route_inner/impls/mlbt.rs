@@ -12,6 +12,7 @@ use crate::msg_header::RelayMethodKind;
 use crate::route::{AppLayerRouteUser, RouteTable, AppLayerRouteInner};
 
 use crate::route_inner::impls::mlbt_message::RelayMsgGrantInfo;
+use crate::route_inner::impls::mlbt_stat::MlbtStatDebug;
 use crate::route_inner::{
     RelayCtl,
     impls::{
@@ -23,9 +24,10 @@ use crate::route_inner::{
 
 use log::debug;
 use log::warn;
+use log::info;
 use yulong_network::identity::Peer;
 
-use super::mlbt_message::{RelayMsgMerge, RelayMsgGrant, RelayMsgRetract};
+use super::mlbt_message::{RelayMsgMerge, RelayMsgGrant, RelayMsgRetract, RelayMsgRetractReply, RelayMsgRetractInfo};
 use super::mlbt_message::RelayMsgMergeCheck;
 use super::mlbt_message::{RelayCtlMessage, RelayMsgJoin,
     RelayMsgLeave, RelayMsgAccept, RelayMsgReject};
@@ -74,11 +76,12 @@ enum BalanceSubTerm {
     
     Grant,          // plan to grant a desc, wait for receiver
     GrantCheck,     // agree on grant, wait for grantee to check
-    GrantPre,       // agree to recv a desc, wait for grantee check
+    GrantPre,       // agree to shift delegate, wait for confirm
 
-    Retract,        // plan to retract a desc, wait for receiver
-    RetractCheck,   // agree on retract, wait for retracted to check
-    RetractPre,     // agree to give away a desc, wait for retracted check
+    Retract,        // plan to retract a desc, wait for giver
+    RetractWait,    // agree on retract, wait for leave
+    RetractCheck,   // agree on retract, wait for target to check
+    RetractPre,     // agree to shift delegate, wait for confirm
 }
 
 
@@ -196,6 +199,7 @@ impl RelayCtl for MlbtRelayCtlContext {
                 }
             }
 
+
             RelayMsgKind::REJECT => {
                 let reply = self.decision_dispatcher(
                     route_ctl, &parse_ctl_message, false);
@@ -204,20 +208,22 @@ impl RelayCtl for MlbtRelayCtlContext {
                 }
             }
 
+
             RelayMsgKind::JOIN => {
                 let reply = self.join_cb(
                     route_ctl, sender, &parse_ctl_message);
                 if let Some((peer, ctl_msg_payload)) = reply {
                     // build a ctl msg and turn into bytes
                     ret.push((peer, ctl_msg_payload.into_bytes().unwrap()));
-                }
-                
+                }    
             }
+
 
             RelayMsgKind::LEAVE => {
                 self.leave_cb(route_ctl, sender, &parse_ctl_message);
             }
 
+            
             RelayMsgKind::MERGE => {
                 let reply = self.merge_cb(route_ctl, sender, &parse_ctl_message);
                 if let Some((peer, ctl_msg_payload)) = reply {
@@ -232,11 +238,23 @@ impl RelayCtl for MlbtRelayCtlContext {
                     ret.push((peer, ctl_msg_payload.into_bytes().unwrap()));
                 }
             }
-        
 
-            _ => {
 
+            RelayMsgKind::GRANT => {
+                let reply = self.grant_cb(route_ctl, sender, &parse_ctl_message);
+                for (peer, ctl_msg_payload) in reply {
+                    ret.push((peer, ctl_msg_payload.into_bytes().unwrap()));
+                }
             }
+
+
+            RelayMsgKind::GRANT_INFO => todo!(),
+
+            
+            RelayMsgKind::RETRACT => todo!(),
+            RelayMsgKind::RETRACT_INFO => todo!(),
+            RelayMsgKind::RETRACT_REPLY => todo!(),
+        
         }
 
         ret
@@ -282,6 +300,8 @@ impl RelayCtl for MlbtRelayCtlContext {
 
 
 }
+
+// todo: state change is not completely done yet
 
 impl MlbtRelayCtlContext {
 
@@ -331,7 +351,7 @@ impl MlbtRelayCtlContext {
             }
 
 
-            if let Some(WaitStateData::MergeCheck((src, merge_target, _, _))) = 
+            if let Some(WaitStateData::MergeCheck((src, merge_target, _))) = 
                 self.wait_list.check(&root, WaitStateType::MergeCheck)
             {
                 self.merge_ck_res_timeout_cb(&src, &merge_target);
@@ -632,8 +652,8 @@ impl MlbtRelayCtlContext {
                     return ret;
                 }
 
-                WaitStateData::MergeCheck((src, merge_target, confirm_id, id)) => {
-                    self.merge_ck_res_cb(route_ctl, &src, &merge_target, confirm_id, id, pos);
+                WaitStateData::MergeCheck((src, merge_target, id)) => {
+                    self.merge_ck_res_cb(route_ctl, &src, &merge_target, id, pos);
                     return ret;
                 }
                 
@@ -641,6 +661,10 @@ impl MlbtRelayCtlContext {
                 WaitStateData::GrantJoin(_) => todo!(),
                 WaitStateData::RetractWait(_) => todo!(),
                 WaitStateData::RetractJoin(_) => todo!(),
+                WaitStateData::GrantRecv(_) => todo!(),
+                WaitStateData::GrantTotal(_) => todo!(),
+                WaitStateData::RetractRecv(_) => todo!(),
+                WaitStateData::RetractTotal(_) => todo!(),
             }
         }
         
@@ -911,7 +935,6 @@ impl MlbtRelayCtlContext {
             WaitStateData::MergeCheck((
                 src.to_owned(),
                 target.to_owned(),
-                confirm_id,
                 msg_seq
             ))
         );
@@ -975,7 +998,7 @@ impl MlbtRelayCtlContext {
 
 
     fn merge_ck_res_cb(&mut self, route_ctl: &mut RouteTable, src: &Peer, 
-        merge_target: &Peer, confirm_id: u64, incoming_id: u64, accepted: bool) -> Option<(Peer, RelayCtlMessage)>
+        merge_target: &Peer, incoming_id: u64, accepted: bool) -> Option<(Peer, RelayCtlMessage)>
     {
         // clear timer
         self.wait_list.clear(src, WaitStateType::MergeCheck);
@@ -988,7 +1011,7 @@ impl MlbtRelayCtlContext {
             let comfirm_msg = RelayCtlMessage::new(
                 RelayMsgKind::ACCEPT,
                 self.seq(), 
-                RelayMsgAccept::from_id(confirm_id)
+                RelayMsgAccept::from_id(incoming_id)
             );
             Some((merge_target.to_owned(), comfirm_msg))
         }
@@ -1001,7 +1024,7 @@ impl MlbtRelayCtlContext {
             let comfirm_msg = RelayCtlMessage::new(
                 RelayMsgKind::REJECT,
                 self.seq(), 
-                RelayMsgAccept::from_id(confirm_id)
+                RelayMsgAccept::from_id(incoming_id)
             );
             Some((merge_target.to_owned(), comfirm_msg))
         }
@@ -1031,12 +1054,12 @@ impl MlbtRelayCtlContext {
     
     
     // check grant condition on each given root
+    // involved nodes are named: granter, receiver, target
+    // try_grant is invoked on granter side
+    // check state in ESTB Balancing IDLE before calling this function
     fn try_grant(&mut self, src: &Peer, route_ctl: &mut RouteTable)
         -> Option<(Peer, RelayCtlMessage)> 
     {
-
-        // todo 
-
         let desc_list = route_ctl.get_relay(src);
         let mut desc_heap: BinaryHeap<PeerWithWeight> = desc_list.iter().fold(BinaryHeap::new(), 
             |mut acc, p| {
@@ -1046,32 +1069,42 @@ impl MlbtRelayCtlContext {
 
         let oi = self.mlbt_stat.src_inv(src)?;
         
-        while let Some(g) = desc_heap.pop() {
+        while let Some(target) = desc_heap.pop() {
             for desc in route_ctl.get_relay(src) {
                 
-                if *g.peer() == desc {continue;}
+                if *target.peer() == desc {continue;}
 
                 let oj = self.mlbt_stat.src_inv_desc(src, &desc)?;
-                let dim = self.mlbt_stat.delay_ts(g.peer())?;
+                let dim = self.mlbt_stat.delay_ts(target.peer())?;
 
 
-                // todo 
                 if oi + oj > dim {
-
                     // grant g to desc
 
-                    // todo: timed data
+                    // state change: has sent a Grant request, do not accept balancing
+                    // requests until finish prev request 
                     self.state.set(src,
                         &MlbtTerm::Estb((JoinSubTerm::Idle, BalanceSubTerm::Grant))
                     );
+
+                    let msg_seq = self.seq();
+
+                    // timed data
+                    self.wait_list.set(src, WaitStateData::GrantWait((
+                        src.to_owned(), desc.clone(), msg_seq
+                    )));
+
+                    self.wait_list.set(src, WaitStateData::GrantTotal((
+                        src.to_owned(), desc.clone()
+                    )));
 
                     return Some((
                         desc,
                         RelayCtlMessage::new(
                             RelayMsgKind::GRANT,
-                            self.seq(),
+                            msg_seq,
                             RelayMsgGrant::new(
-                                g.peer,
+                                target.peer,
                                 oi,
                                 src.to_owned(),
                             )
@@ -1083,17 +1116,292 @@ impl MlbtRelayCtlContext {
                     // continue
                 }
             }
-        } 
+        }
         // no feasible grant
         None
+    }
+
+
+    // cb for receiving a grant message
+    // invoked on receiver side
+    fn grant_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
+        msg: &RelayCtlMessage) -> Vec<(Peer, RelayCtlMessage)>
+    {
+        let mut ret: Vec<(Peer, RelayCtlMessage)> = vec![];
+
+        // decode merge request
+        let grant_msg = RelayMsgGrant::from_bytes(&msg.payload());
+        if grant_msg.is_err() {
+            warn!("MlbtRelayCtlContext::grant_cb parse RelayMsgGrant failed: {}",
+            grant_msg.unwrap_err());
+
+            // ignore ill-formed messages
+            return ret; 
+        }
+        let grant_msg = grant_msg.unwrap();
+
+        if !matches!(
+            *self.state.get(grant_msg.src_id()).unwrap(),
+            MlbtTerm::Estb((_, BalanceSubTerm::Idle))
+        ) {
+            // engaged in other balancing procedures
+            // reject immediately
+
+            ret.push((
+                sender.to_owned(),
+                msg.reject(self.seq())
+            ));
+            return ret;
+        }
+
+        let oj = grant_msg.src_inv();
+
+        let oi = match self.mlbt_stat.src_inv(grant_msg.src_id()) {
+            Some(val) => val,
+            None => {
+                return ret;
+            }
+        };
+        
+        let dim = match self.mlbt_stat.delay_ts(grant_msg.target_id()) {
+            Some(val) => val,
+            None => {
+                return ret;
+            }
+        };
+
+        // check grant condition
+        if oi - oj > dim {
+            // accept
+            
+            // ack to requester
+            ret.push((
+                sender.to_owned(),
+                msg.accept(self.seq())
+            ));
+
+            // grant info to grantee
+            ret.push((
+                grant_msg.target_id().to_owned(),
+                RelayCtlMessage::new(
+                    RelayMsgKind::GRANT_INFO,
+                    self.seq(),
+                    RelayMsgGrantInfo::new(
+                        grant_msg.src_id().to_owned(),
+                    ),
+                )
+            ));
+
+            // state change
+            self.state.set(grant_msg.src_id(),
+                &MlbtTerm::Estb((JoinSubTerm::Request, BalanceSubTerm::GrantCheck)));
+
+            // start timer
+            self.wait_list.set(grant_msg.src_id(), WaitStateData::GrantRecv((
+                grant_msg.src_id().to_owned(), grant_msg.target_id().to_owned()
+            )));
+
+        }
+        else {
+            //reject
+            ret.push((
+                sender.to_owned(),
+                msg.reject(self.seq())
+            ));
+        }
+
+        ret
+    }
+
+
+    // cb wait for reply to previous grant request
+    // invoked on granter side
+    fn grant_wait_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer, src: &Peer,
+        accepted: bool) 
+    {
+        
+        // clear timer
+        self.wait_list.clear(src, WaitStateType::GrantWait);
+
+        if accepted {
+            debug!("MlbtRelayCtlContext::grant_wait_cb agreed");
+            // stay in balancing state until leave
+            // todo start a timer
+            self.wait_list.set(src, WaitStateData::GrantTotal(
+                (src.to_owned(), sender.to_owned())));
+        }
+        else {
+            debug!("MlbtRelayCtlContext::grant_wait_cb rejected");
+            // todo: mark as rejected and do not retry it for a while
+
+            // back to idle
+            self.state.set(src,
+                &MlbtTerm::Estb((JoinSubTerm::Idle, BalanceSubTerm::Idle)));
+        }
+
+    }
+
+
+    // cb for an incoming grant info
+    // invoked on target side
+    fn grant_info_cb(&mut self, sender: &Peer, msg: &RelayCtlMessage) 
+        -> Option<(Peer, RelayCtlMessage)> 
+    {
+        // decode merge request
+        let info_msg = RelayMsgGrantInfo::from_bytes(&msg.payload());
+        if info_msg.is_err() {
+            warn!("MlbtRelayCtlContext::grant_info_cb parse RelayMsgGrantInfo failed: {}",
+            info_msg.unwrap_err());
+
+            // ignore ill-formed messages
+            return None; 
+        }
+        let info_msg = info_msg.unwrap();
+
+        // todo
+
+        match self.state.get(info_msg.src_id()) {
+
+            // not engaged in other balancing procedure
+            Some(MlbtTerm::Estb((_, BalanceSubTerm::Idle))) => {
+                
+                self.state.set(info_msg.src_id(),
+                    &MlbtTerm::Estb((JoinSubTerm::Request, BalanceSubTerm::GrantPre)));
+                
+                let join_seq = self.seq();
+                
+                self.wait_list.set(info_msg.src_id(), WaitStateData::GrantJoin((
+                    info_msg.src_id().to_owned(), sender.to_owned(), join_seq
+                )));
+                
+                Some((
+                    sender.to_owned(), 
+                    msg.accept(self.seq())
+                ))
+            }
+
+            _ => Some((
+                sender.to_owned(), 
+                msg.reject(self.seq())
+            )),
+        }
+    }
+    
+
+    // cb for join request related to grant procedure
+    // invoked on receiver side
+    fn grant_info_ack_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
+        src: &Peer, incoming_id: u64, accepted: bool) -> Option<(Peer, RelayCtlMessage)> 
+    {
+
+        self.wait_list.clear(src, WaitStateType::GrantRecv);
+
+        if accepted {
+
+            // change state
+            self.state.set(src,&MlbtTerm::Estb((
+                JoinSubTerm::Idle, BalanceSubTerm::Idle)));
+
+            let confirm_seq = self.seq();
+            
+            // insert relay now since grantee will leave its current delgate after
+            // receiving the following accept
+            route_ctl.insert_relay(src, sender);
+
+            let comfirm_msg = RelayCtlMessage::new(
+                RelayMsgKind::ACCEPT,
+                confirm_seq,
+                RelayMsgAccept::from_id(incoming_id)
+            );
+            
+            // confirm join
+            return Some((
+                sender.to_owned(), 
+                comfirm_msg
+            ));
+        }
+        else {
+            //todo
+            // be rejected
+            // reset state
+            self.state.set(src,&MlbtTerm::Estb((
+                JoinSubTerm::Idle, BalanceSubTerm::Idle)));
+        }
+        None
+    }
+
+
+    // cb for join accept related to grant procedure
+    // invoked on target side
+    fn grant_info_wait_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
+        src: &Peer, incoming_id: u64, accepted: bool) -> Option<(Peer, RelayCtlMessage)> 
+    {
+        
+        self.wait_list.clear(src, WaitStateType::GrantJoin);
+        self.state.set(src,&MlbtTerm::Estb((
+            JoinSubTerm::Idle, BalanceSubTerm::Idle)));
+
+
+        if accepted {
+            
+            let origin_delegate = route_ctl.get_delegate(src);
+
+            // reg new delegate
+            route_ctl.reg_delegate(src, sender);
+
+            let leave_msg = RelayCtlMessage::new(
+                RelayMsgKind::LEAVE,
+                self.seq(),
+                RelayMsgLeave::new(src)
+            );
+
+            if let Some(del) = origin_delegate {
+                return Some((
+                    del,
+                    leave_msg
+                ));
+            }
+            else {
+                warn!("MlbtRelayCtlContext::grant_join_wait_cb try to leave original delegate \
+                    but cannot find one");
+            }
+
+        }
+        else {
+            // not possible for now
+        }
+
+        None
+    }
+
+
+    // handle leave message related to grant procedure
+    // basically same as leave cb but will change grant state and cease timer
+    fn grant_leave_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
+        msg: &RelayCtlMessage) 
+    {
+        match RelayMsgLeave::from_bytes(&msg.payload()) {
+            Ok(leave_msg) => {
+
+                self.state.set(leave_msg.src(),&MlbtTerm::Estb((
+                    JoinSubTerm::Idle, BalanceSubTerm::Idle)));
+                
+                self.wait_list.clear(leave_msg.src(), WaitStateType::GrantTotal);
+
+                route_ctl.remove_relay(leave_msg.src(), sender);
+            }
+
+            Err(error) => {
+                warn!("MlbtRelayCtlContext::join_callback parse RelayMsgLeave failed: {}", error);
+                // ignore ill-formed messages 
+            }
+        }
     }
 
 
     fn try_retract(&mut self, src: &Peer, route_ctl: &mut RouteTable) 
         -> Option<(Peer, RelayCtlMessage)> 
     {
-        // todo 
-
         let desc_list = route_ctl.get_relay(src);
         let min_weight_peer: PeerWithWeight = desc_list.iter().fold(
             PeerWithWeight{peer: Peer::BROADCAST_ID, weight: u64::max_value()}, 
@@ -1112,25 +1420,30 @@ impl MlbtRelayCtlContext {
         for desc in route_ctl.get_relay(src) {
 
             let oj = self.mlbt_stat.src_inv_desc(src, &desc)?;
-
-            // todo 
+ 
             if oj - oi > dim {
-
                 // try retrive from desc
 
-                // todo: timed data
+                // state change: has sent a Retract request, do not accept balancing
+                // requests until finish prev request
                 self.state.set(src,
                     &MlbtTerm::Estb((JoinSubTerm::Idle, BalanceSubTerm::Retract))
                 );
+
+                let msg_seq = self.seq();
+
+                // timed data
+                self.wait_list.set(src, WaitStateData::RetractWait((
+                    src.to_owned(), desc.clone(), msg_seq
+                )));
 
                 return Some((
                     desc,
                     RelayCtlMessage::new(
                         RelayMsgKind::RETRACT,
-                        self.seq(),
+                        msg_seq,
                         RelayMsgRetract::new(
                             src.to_owned(),
-                            dim,
                             oi
                         ),
                     )
@@ -1146,98 +1459,171 @@ impl MlbtRelayCtlContext {
     }
 
 
-    // cb for receiving a grant message
-    fn grant_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
-        msg: &RelayCtlMessage) -> Vec<(Peer, RelayCtlMessage)>
+    fn retract_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
+        msg: &RelayCtlMessage) -> Option<(Peer, RelayCtlMessage)> 
     {
-        let mut ret: Vec<(Peer, RelayCtlMessage)> = vec![];
-
-        // decode merge request
-        let grant_msg = RelayMsgGrant::from_bytes(&msg.payload());
-        if grant_msg.is_err() {
-            warn!("MlbtRelayCtlContext::grant_cb parse RelayMsgGrant failed: {}",
-            grant_msg.unwrap_err());
+        // decode retract request
+        let retract_msg = RelayMsgRetract::from_bytes(&msg.payload());
+        if retract_msg.is_err() {
+            warn!("MlbtRelayCtlContext::retract_cb parse RelayMsgRetract failed: {}",
+            retract_msg.unwrap_err());
 
             // ignore ill-formed messages
-            return ret; 
+            return None; 
         }
-        let grant_msg = grant_msg.unwrap();
+        let retract_msg = retract_msg.unwrap();
 
-        let oj = grant_msg.src_inv();
+        let oi = self.mlbt_stat.src_inv(retract_msg.src_id())?;
 
-        let oi = match self.mlbt_stat.src_inv(grant_msg.src_id()) {
-            Some(val) => val,
-            None => {
-                return ret;
-            }
-        };
-        
-        let dim = match self.mlbt_stat.delay_ts(grant_msg.grant_id()) {
-            Some(val) => val,
-            None => {
-                return ret;
-            }
-        };
+        if !matches!(
+            *self.state.get(retract_msg.src_id()).unwrap(),
+            MlbtTerm::Estb((_, BalanceSubTerm::Idle))
+        ) {
+            // engaged in other balancing procedures
+            // reject immediately
 
-        if oi - oj > dim {
-            // accept
-            
-            // ack to requester
+            // do not need state change and timer
 
-            ret.push((
+            return Some((
                 sender.to_owned(),
-                msg.accept(self.seq())
-            ));
-
-            // grant info to grantee
-            ret.push((
-                grant_msg.grant_id().to_owned(),
                 RelayCtlMessage::new(
-                    RelayMsgKind::GRANT_INFO,
+                    RelayMsgKind::RETRACT_REPLY,
                     self.seq(),
-                    RelayMsgGrantInfo::new(
-                        grant_msg.src_id().to_owned(),
+                    RelayMsgRetractReply::new(
+                        retract_msg.src_id().to_owned(),
+                        Peer::BROADCAST_ID,
+                        oi
                     ),
                 )
             ));
-
-        }
-        else {
-            //reject
-            ret.push((
-                sender.to_owned(),
-                msg.reject(self.seq())
-            ));
         }
 
-        ret
-    }
-
-
-    // cb wait for reply to previous grant request
-    fn grant_wait_cb(&mut self, route_ctl: &mut RouteTable, src: &Peer, accepted: bool) {
+        let desc_list = route_ctl.get_relay(retract_msg.src_id());
+        let min_weight_peer: PeerWithWeight = desc_list.iter().fold(
+            PeerWithWeight{peer: Peer::BROADCAST_ID, weight: u64::max_value()}, 
+            |mut acc, p| {
+                let pw = PeerWithWeight::new(p, &self.mlbt_stat);
+                if acc.weight() > pw.weight() {
+                    acc = pw;
+                }
+                acc
+            });
         
-        self.wait_list.clear(src, WaitStateType::GrantWait);
-        if accepted {
-            debug!("MlbtRelayCtlContext::grant_wait_cb agreed");
-            // todo: stay in balancing state until leave
+        let dim = self.mlbt_stat.delay_ts(min_weight_peer.peer())?;
+        let oj = retract_msg.src_inv();
+
+        if oi - oj > dim {
+            // accept
+
+            // change state
+            self.state.set(retract_msg.src_id(),
+                &MlbtTerm::Estb((JoinSubTerm::Request, BalanceSubTerm::RetractWait))
+            );
+
+            // start timer
+            self.wait_list.set(retract_msg.src_id(), WaitStateData::RetractTotal((
+                retract_msg.src_id().to_owned(),
+                min_weight_peer.peer().to_owned()
+            )));
+
+            // send info message
+            Some((
+                sender.to_owned(),
+                RelayCtlMessage::new(
+                    RelayMsgKind::RETRACT_REPLY,
+                    self.seq(),
+                    RelayMsgRetractReply::new(
+                        retract_msg.src_id().to_owned(),
+                        min_weight_peer.peer().to_owned(),
+                        oi
+                    ),
+                )
+            ))
         }
         else {
-            debug!("MlbtRelayCtlContext::grant_wait_cb rejected");
-            // todo: mark as rejected and do not retry it for a while
-        }
+            // rejected
 
+            Some((
+                sender.to_owned(),
+                RelayCtlMessage::new(
+                    RelayMsgKind::RETRACT_REPLY,
+                    self.seq(),
+                    RelayMsgRetractReply::new(
+                        retract_msg.src_id().to_owned(),
+                        Peer::BROADCAST_ID,
+                        oi
+                    ),
+                )
+            ))
+        }
     }
 
 
-    // cb for an incoming grant info
-    fn grant_info_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
+    fn retract_wait_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
         msg: &RelayCtlMessage) -> Option<(Peer, RelayCtlMessage)> 
     {
-        // decode merge request
-        let info_msg = RelayMsgGrantInfo::from_bytes(&msg.payload());
+        // decode retract_info request
+        let reply_msg = RelayMsgRetractReply::from_bytes(&msg.payload());
+        if reply_msg.is_err() {
+            warn!("MlbtRelayCtlContext::retract_wait_cb parse RelayMsgRetractReply failed: {}",
+            reply_msg.unwrap_err());
+
+            // ignore ill-formed messages
+            return None; 
+        }
+        let reply_msg = reply_msg.unwrap();
+
+        self.wait_list.clear(reply_msg.src_id(), WaitStateType::RetractWait);
+
+        if *reply_msg.target_id() == Peer::BROADCAST_ID {
+            // rejected
+
+            self.state.set(reply_msg.src_id(),
+                &MlbtTerm::Estb((JoinSubTerm::Idle, BalanceSubTerm::Idle))
+            );
+
+            self.mlbt_stat.set_src_inv_desc(reply_msg.src_id(), sender, reply_msg.src_inv());
+            None
+        }
+        else {
+            // accepted
+
+            self.state.set(reply_msg.src_id(),
+                &MlbtTerm::Estb((JoinSubTerm::Request, BalanceSubTerm::RetractCheck))
+            );
+
+            let info_seq = self.seq();
+
+            self.wait_list.set(reply_msg.src_id(), WaitStateData::RetractJoin((
+                reply_msg.src_id().to_owned(),
+                reply_msg.target_id().to_owned(),
+                info_seq
+            )));
+
+            let oi = self.mlbt_stat.src_inv(reply_msg.src_id())?;
+
+            Some((
+                reply_msg.target_id().to_owned(),
+                RelayCtlMessage::new(
+                    RelayMsgKind::RETRACT_INFO,
+                    info_seq,
+                    RelayMsgRetractInfo::new(
+                        reply_msg.src_id().to_owned(),
+                        oi
+                    ),
+                )
+            ))
+        }
+    }
+
+
+    fn retract_info_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
+        msg: &RelayCtlMessage) -> Option<(Peer, RelayCtlMessage)>
+    {
+        // decode retract_info request
+        let info_msg = RelayMsgRetractInfo::from_bytes(&msg.payload());
         if info_msg.is_err() {
-            warn!("MlbtRelayCtlContext::grant_info_cb parse RelayMsgGrantInfo failed: {}",
+            warn!("MlbtRelayCtlContext::retract_info_cb parse RelayMsgRetractInfo failed: {}",
             info_msg.unwrap_err());
 
             // ignore ill-formed messages
@@ -1245,43 +1631,98 @@ impl MlbtRelayCtlContext {
         }
         let info_msg = info_msg.unwrap();
 
-        // todo
+        // todo decide whether to accept, always accept now
 
-        match self.state.get(info_msg.src_id()) {
+        self.state.set(info_msg.src_id(),
+            &MlbtTerm::Estb((JoinSubTerm::PreJoin, BalanceSubTerm::RetractPre))
+        );
 
-            // not engaged in other balancing procedure
-            Some(MlbtTerm::Estb((_, BalanceSubTerm::Idle))) => Some((
-                sender.to_owned(), 
-                msg.accept(self.seq())
-            )),
+        let join_seq = self.seq();
 
-            _ => Some((
-                sender.to_owned(), 
-                msg.reject(self.seq())
-            )),
+        self.wait_list.set(info_msg.src_id(), WaitStateData::RetractRecv((
+            info_msg.src_id().to_owned(),
+            sender.to_owned(),
+            join_seq
+        )));
+
+        Some((
+            sender.to_owned(),
+            msg.accept(join_seq)
+        ))
+    }
+
+
+    fn retract_info_ack_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
+        src: &Peer, incoming_id: u64, accepted: bool) -> Option<(Peer, RelayCtlMessage)> 
+    {
+
+        self.wait_list.clear(src, WaitStateType::RetractJoin);
+        self.state.set(src,&MlbtTerm::Estb((
+            JoinSubTerm::Idle, BalanceSubTerm::Idle)));
+
+        if accepted {
+
+            route_ctl.insert_relay(src, sender);
+
+            let comfirm_msg = RelayCtlMessage::new(
+                RelayMsgKind::ACCEPT,
+                self.seq(), 
+                RelayMsgAccept::from_id(incoming_id)
+            );
+            Some((sender.to_owned(), comfirm_msg))
+        }
+        else {
+            // rejected
+            // todo: why and how to update stat
+            None
         }
     }
-    
 
-    // cb for reply to previous join request related to grant procedure
-    fn grant_join_cb(&mut self, route_ctl: &mut RouteTable) 
-        -> Option<(Peer, RelayCtlMessage)> 
+
+    fn retract_info_wait_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
+        src: &Peer, incoming_id: u64, accepted: bool) -> Option<(Peer, RelayCtlMessage)> 
     {
-        todo!();
+        self.wait_list.clear(src, WaitStateType::RetractRecv);
+        self.state.set(src,&MlbtTerm::Estb((
+            JoinSubTerm::Idle, BalanceSubTerm::Idle)));
+
+        if accepted {
+
+            route_ctl.reg_delegate(src, sender);
+
+            let leave_msg = RelayCtlMessage::new(
+                RelayMsgKind::LEAVE,
+                self.seq(),
+                RelayMsgLeave::new(src)
+            );
+
+            Some((sender.to_owned(), leave_msg))
+        }
+        else {
+            None
+        }
     }
 
 
-    fn retract_cb(&mut self, route_ctl: &mut RouteTable) 
-        -> Option<(Peer, RelayCtlMessage)> 
+    fn retact_leave_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
+        msg: &RelayCtlMessage) 
     {
-        todo!();
-    }
+        
+        match RelayMsgLeave::from_bytes(&msg.payload()) {
+            Ok(leave_msg) => {
+                self.state.set(leave_msg.src(),&MlbtTerm::Estb((
+                    JoinSubTerm::Idle, BalanceSubTerm::Idle)));
+                
+                self.wait_list.clear(leave_msg.src(), WaitStateType::GrantTotal);
 
+                route_ctl.remove_relay(leave_msg.src(), sender);
+            }
 
-    fn retract_join_cb(&mut self, route_ctl: &mut RouteTable) 
-        -> Option<(Peer, RelayCtlMessage)> 
-    {
-        todo!();
+            Err(error) => {
+                warn!("MlbtRelayCtlContext::retact_leave_cb parse RelayMsgLeave failed: {}", error);
+                // ignore ill-formed messages 
+            }
+        }
     }
 
 }
