@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::vec;
 use rand;
 use crate::message::{
@@ -10,8 +9,6 @@ use crate::quorum::{QuorumCollector, VoteBox, VoteBoxes, VoteResult};
 use crate::store::{Store, StoreService};
 
 use log::{debug, info, warn};
-use num_derive::{FromPrimitive, ToPrimitive};
-use num_traits::{FromPrimitive, ToPrimitive};
 
 use yulong_network::identity::Peer;
 use yulong_network::identity::Me;

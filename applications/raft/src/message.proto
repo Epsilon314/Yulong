@@ -2,42 +2,55 @@ syntax = "proto3";
 
 package raft;
 
+
+message raft_message {
+    uint32 kind = 1;
+
+    oneof msg {
+        request_vote req = 2;
+        request_vote_reply reply = 3;
+        append_entries app = 4;
+        append_entries_reply app_reply = 5;
+    }
+}
+
+
 message request_vote {
 
-    uint32 msg_no = 0;
+    uint32 msg_no = 1;
 
-    uint64 term = 1;
-    bytes candidate_id = 2;
-    uint64 last_log_index = 3;
-    uint64 last_log_term = 4;
+    uint64 term = 2;
+    bytes candidate_id = 3;
+    uint64 last_log_index = 4;
+    uint64 last_log_term = 5;
 }
 
 
 message request_vote_reply {
 
-    uint32 ack = 0;
+    uint32 ack = 1;
 
-    uint64 term = 1;
-    bool vote_granted = 2;
+    uint64 term = 2;
+    bool vote_granted = 3;
 }
 
 
 message append_entries {
 
-    uint32 msg_no = 0;
+    uint32 msg_no = 1;
 
-    uint64 term = 1;
-    bytes leader_id = 2;
-    uint64 prev_log_idx = 3;
-    repeated uint64 prev_log_term_entries = 4;
-    uint64 leader_commit = 5;
+    uint64 term = 2;
+    bytes leader_id = 3;
+    uint64 prev_log_idx = 4;
+    repeated uint64 prev_log_term_entries = 5;
+    uint64 leader_commit = 6;
 }
 
 
 message append_entries_reply {
 
-    uint32 ack = 0;
+    uint32 ack = 1;
 
-    uint64 term = 1;
-    bool success = 2;
+    uint64 term = 2;
+    bool success = 3;
 }

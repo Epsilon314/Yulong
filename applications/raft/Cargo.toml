@@ -1,9 +1,27 @@
 [package]
 name = "raft"
 version = "0.1.0"
+authors = ["Yiqing Zhu <yiqing_zhu2015@126.com>"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+prost = "0.7"
+prost-types = "0.7.0"
+
+yulong = {path = "../../"}
 yulong_network = {path = "../../network"}
+yulong_tcp = {path = "../../transport/tcp"}
+yulong_bdn = {path = "../../applications/bdn"}
+log = "0.4.14"
+rand = "0.8.3"
+
+async-std = {version = "1.10.0", features = ["attributes", "tokio1"]}
+async-trait = "0.1.51"
+
+num-traits = "0.2"
+num-derive = "0.3"
+
+[build-dependencies]
+prost-build = "0.7.0"
