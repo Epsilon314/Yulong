@@ -12,16 +12,17 @@ pub enum WaitStateData {
     MergeWait((Peer, Peer, u64)), // src, waitfor, ack msg id
     MergePre((Peer, Peer, u64)), // src, requirer, ack msg id
     // src, merge target, accept request msg id, require msg id
-    MergeCheck((Peer, Peer, u64, u64)),
+    MergeCheck((Peer, Peer, u64)),
     
     GrantWait((Peer, Peer, u64)), // src, receiver, request msg id
     GrantJoin((Peer, Peer, u64)), // src, recv, join msg id
     GrantRecv((Peer, Peer)), // src, expecting 
     GrantTotal((Peer, Peer)), // src, grantee
-    GrantPre((Peer, u64)), // src, join confirmation id
 
     RetractWait((Peer, Peer, u64)), // src, recv, request msg id
     RetractJoin((Peer, Peer, u64)), // src, recv, request msg id
+    RetractRecv((Peer, Peer, u64)), // src, expecting, request msg id
+    RetractTotal((Peer, Peer)), // src, grantee
 }
 
 
@@ -29,13 +30,20 @@ pub enum WaitStateData {
 pub enum WaitStateType {
     JoinWait,
     JoinPre,
+
     MergeWait,
     MergePre,
     MergeCheck,
+    
     GrantWait,
     GrantJoin,
+    GrantRecv,
+    GrantTotal,
+    
     RetractWait,
     RetractJoin,
+    RetractRecv,
+    RetractTotal,
 }
 
 // todo: initial from config 
@@ -142,7 +150,9 @@ impl WaitState {
             WaitStateData::RetractJoin(_) => todo!(),
             WaitStateData::GrantRecv(_) => todo!(),
             WaitStateData::GrantTotal(_) => todo!(),
-            WaitStateData::GrantPre(_) => todo!(),
+            WaitStateData::RetractRecv(_) => todo!(),
+            WaitStateData::RetractTotal(_) => todo!(),
+            
         }
 
         ret.wait_timer.set_now();
@@ -227,6 +237,10 @@ impl TimedStatesSingle for WaitStats {
             WaitStateType::GrantJoin => todo!(),
             WaitStateType::RetractWait => todo!(),
             WaitStateType::RetractJoin => todo!(),
+            WaitStateType::GrantRecv => todo!(),
+            WaitStateType::GrantTotal => todo!(),
+            WaitStateType::RetractRecv => todo!(),
+            WaitStateType::RetractTotal => todo!(),
         }
     }
 
@@ -306,6 +320,10 @@ impl TimedStatesSingle for WaitStats {
             WaitStateType::GrantJoin => todo!(),
             WaitStateType::RetractWait => todo!(),
             WaitStateType::RetractJoin => todo!(),
+            WaitStateType::GrantRecv => todo!(),
+            WaitStateType::GrantTotal => todo!(),
+            WaitStateType::RetractRecv => todo!(),
+            WaitStateType::RetractTotal => todo!(),
         }
     }
 
@@ -337,7 +355,9 @@ impl TimedStatesSingle for WaitStats {
             WaitStateData::RetractJoin(_) => todo!(),
             WaitStateData::GrantRecv(_) => todo!(),
             WaitStateData::GrantTotal(_) => todo!(),
-            WaitStateData::GrantPre(_) => todo!(),
+            WaitStateData::RetractRecv(_) => todo!(),
+            WaitStateData::RetractTotal(_) => todo!(),
+            
         }
     }
 
@@ -367,6 +387,10 @@ impl TimedStatesSingle for WaitStats {
             WaitStateType::GrantJoin => todo!(),
             WaitStateType::RetractWait => todo!(),
             WaitStateType::RetractJoin => todo!(),
+            WaitStateType::GrantRecv => todo!(),
+            WaitStateType::GrantTotal => todo!(),
+            WaitStateType::RetractRecv => todo!(),
+            WaitStateType::RetractTotal => todo!(),
         }
     }
 
@@ -418,7 +442,7 @@ impl TimedStatesSingle for WaitStats {
 
         if let Some(merge_check_data) = &self.merge_check {
             match &merge_check_data.inner {
-                WaitStateData::MergeCheck((_, _, _, sid)) => {
+                WaitStateData::MergeCheck((_, _, sid)) => {
                     if *sid == id {
                         return Some(merge_check_data.inner.clone())
                     }

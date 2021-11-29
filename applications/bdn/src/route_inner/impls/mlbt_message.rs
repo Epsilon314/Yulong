@@ -8,6 +8,8 @@ use crate::bdn_message::{
     MlbtMerge,
     MlbtMergeCheck,
     MlbtGrant,
+    MlbtGrantInfo,
+    MlbtRetract,
 };
 
 use yulong::utils::AsBytes;
@@ -33,6 +35,7 @@ pub enum RelayMsgKind {
 
     RETRACT = 8,
     RETRACT_INFO = 9,
+    RETRACT_REPLY = 10,
 }
 
 
@@ -201,6 +204,13 @@ impl AsBytes for RelayMsgLeave {
 
 
 impl RelayMsgLeave {
+
+    pub fn new(src: &Peer) -> Self {
+        Self {
+            src: src.to_owned()
+        }
+    }
+
     pub fn src(&self) -> &Peer {
         &self.src
     }
@@ -433,7 +443,7 @@ impl RelayMsgMergeCheck {
 
 #[derive(Debug)]
 pub struct RelayMsgGrant {
-    grant_id: Peer,
+    target_id: Peer,
     src_inv: u64,
     src_id: Peer,
 }
@@ -443,7 +453,7 @@ impl AsBytes for RelayMsgGrant {
 
     fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
         let protobuf_msg = MlbtGrant {
-            grant_id: self.grant_id.get_id().to_vec(),
+            target_id: self.target_id.get_id().to_vec(),
             src_inv: self.src_inv,
             src_id: self.src_id.get_id().to_vec(),
         };
@@ -470,11 +480,11 @@ impl AsBytes for RelayMsgGrant {
 
             Ok(msg) => {
 
-                let grant = Peer::try_from_id(&msg.grant_id);
-                if grant.is_err() {
+                let target = Peer::try_from_id(&msg.target_id);
+                if target.is_err() {
                     return Err(DeserializeError::new(
                         "RelayMsgGrant::from_bytes", 
-                        grant.unwrap_err()));
+                        target.unwrap_err()));
                 }
     
                 let src = Peer::try_from_id(&msg.src_id);
@@ -485,7 +495,7 @@ impl AsBytes for RelayMsgGrant {
                 }
 
                 Ok(Self {
-                    grant_id: grant.unwrap(),
+                    target_id: target.unwrap(),
                     src_inv: msg.src_inv,
                     src_id: src.unwrap()
                 })
@@ -500,17 +510,17 @@ impl AsBytes for RelayMsgGrant {
 
 
 impl RelayMsgGrant {
-    pub fn new(grant_id: Peer, src_inv: u64, src_id: Peer) -> Self {
+    pub fn new(target_id: Peer, src_inv: u64, src_id: Peer) -> Self {
         Self { 
-            grant_id,
+            target_id,
             src_inv,
             src_id
         }
     }
 
     /// Get a reference to the relay msg grant's grant id.
-    pub fn grant_id(&self) -> &Peer {
-        &self.grant_id
+    pub fn target_id(&self) -> &Peer {
+        &self.target_id
     }
 
     /// Get a reference to the relay msg grant's src inv.
@@ -533,13 +543,52 @@ pub struct RelayMsgGrantInfo {
 
 
 impl AsBytes for RelayMsgGrantInfo {
+
     fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
-        todo!()
+        let protobuf_msg = MlbtGrantInfo {
+            src_id: self.src_id.get_id().to_vec(),
+        };
+
+        let protobuf_bytes_len = protobuf_msg.encoded_len();
+        let mut protobuf_buf: Vec<u8> = Vec::with_capacity(protobuf_bytes_len);
+        match protobuf_msg.encode(&mut protobuf_buf) {
+            Ok(_) => {
+                Ok(protobuf_buf)
+            }
+
+            Err(error) => {
+                Err(SerializeError::new(
+                    "RelayMsgGrantInfo::into_bytes",
+                    error
+                ))
+            }
+        }
     }
 
+
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
-        todo!()
+        match MlbtGrantInfo::decode(buf) {
+
+            Ok(msg) => {
+
+                let src = Peer::try_from_id(&msg.src_id);
+                if src.is_err() {
+                    return Err(DeserializeError::new(
+                        "RelayMsgGrantInfo::from_bytes", 
+                        src.unwrap_err()));
+                }
+
+                Ok(Self {
+                    src_id: src.unwrap()
+                })
+            }
+
+            Err(error) => {
+                Err(DeserializeError::new("RelayMsgGrantInfo::from_bytes", error))
+            }
+        }
     }
+
 }
 
 
@@ -555,10 +604,10 @@ impl RelayMsgGrantInfo {
 }
 
 
+#[derive(Debug)]
 pub struct RelayMsgRetract {
     src_id: Peer,
-    delay_ts: u64,
-    relay_inv: u64,
+    src_inv: u64,
 }
 
 
@@ -574,11 +623,10 @@ impl AsBytes for RelayMsgRetract {
 
 
 impl RelayMsgRetract {
-    pub fn new(src_id: Peer, delay_ts: u64, relay_inv: u64) -> Self {
+    pub fn new(src_id: Peer, relay_inv: u64) -> Self {
         Self {
             src_id,
-            delay_ts,
-            relay_inv
+            src_inv: relay_inv
         }
     }
 
@@ -589,18 +637,53 @@ impl RelayMsgRetract {
         &self.src_id
     }
 
-    /// Get a reference to the relay msg retract's delay ts.
-    pub fn delay_ts(&self) -> u64 {
-        self.delay_ts
-    }
-
     /// Get a reference to the relay msg retract's relay inv.
-    pub fn relay_inv(&self) -> u64 {
-        self.relay_inv
+    pub fn src_inv(&self) -> u64 {
+        self.src_inv
     }
 }
 
 
+#[derive(Debug)]
+pub struct RelayMsgRetractReply {
+    src_id: Peer,
+    target_id: Peer,
+    src_inv: u64,
+}
+
+impl AsBytes for RelayMsgRetractReply {
+    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
+        todo!()
+    }
+
+    fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
+        todo!()
+    }
+}
+
+impl RelayMsgRetractReply {
+    pub fn new(src_id: Peer, target_id: Peer, src_inv: u64) -> Self { Self { src_id, target_id, src_inv } }
+
+
+    /// Get a reference to the relay msg retract reply's target id.
+    pub fn target_id(&self) -> &Peer {
+        &self.target_id
+    }
+
+    /// Get a reference to the relay msg retract reply's src id.
+    pub fn src_id(&self) -> &Peer {
+        &self.src_id
+    }
+
+    /// Get a reference to the relay msg retract reply's src inv.
+    pub fn src_inv(&self) -> u64 {
+        self.src_inv
+    }
+}
+
+
+
+#[derive(Debug)]
 pub struct RelayMsgRetractInfo {
     src_id: Peer,
     src_inv: u64,

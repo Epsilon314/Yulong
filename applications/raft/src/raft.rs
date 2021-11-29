@@ -36,5 +36,20 @@ pub struct RaftContext {
 
 
 impl RaftContext {
+ 
+    fn send_append_entry() {}
     
+    // empty append entry
+    fn send_heartbeat() {}
+    
+    fn heartbeat_cb() {}
+    
+    // follower heartbeat timeout, start an election
+    fn election_timeout_cb() {}
+
+    fn send_request_vote() {}
+
+    fn request_vote_cb() {}
+
+
 }
