@@ -5,13 +5,19 @@ package raft;
 
 message raft_message {
     uint32 kind = 1;
-
+    uint32 seq = 2;
     oneof msg {
-        request_vote req = 2;
-        request_vote_reply reply = 3;
-        append_entries app = 4;
-        append_entries_reply app_reply = 5;
+        request_vote req = 3;
+        request_vote_reply reply = 4;
+        append_entries app = 5;
+        append_entries_reply app_reply = 6;
+        client_request client_req = 7;
     }
+}
+
+
+message client_request {
+    bytes request = 1;
 }
 
 

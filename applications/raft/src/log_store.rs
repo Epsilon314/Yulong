@@ -4,13 +4,22 @@ pub(crate) trait LogService {
     // them across the cluster
     fn client_new_entry(payload: LogEntry);
 
-    fn commit(&mut self, idx: usize);
+    fn commit(&mut self, idx: u64);
+
+    fn last(&self) -> (u64, LogEntry);
 }
 
 
 pub(crate) struct LogEntry {
     term: u64,
     command: Vec<u8>,
+}
+
+impl LogEntry {
+    /// Get a reference to the log entry's term.
+    pub(crate) fn term(&self) -> u64 {
+        self.term
+    }
 }
 
 
@@ -25,7 +34,11 @@ impl LogService for ReplicatedLog {
         todo!()
     }
 
-    fn commit(&mut self, _: usize) { todo!() }
+    fn commit(&mut self, _: u64) { todo!() }
+
+    fn last(&self) -> (u64, LogEntry) {
+        todo!()
+    }
 }
 
 

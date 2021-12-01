@@ -26,7 +26,7 @@ use crate::{
 
 use crate::route_inner::RelayCtl;
 
-pub struct BDN<T: Transport, R: RelayCtl + Send + Sync> {
+pub struct BDN<T: Transport, R: RelayCtl> {
     local_identity: Me,
 
     // peer's listening socket
@@ -46,7 +46,7 @@ pub struct BDN<T: Transport, R: RelayCtl + Send + Sync> {
     heartbeat_timer: CasualTimer,
 }
 
-impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
+impl<T: Transport, R: RelayCtl> BDN<T, R> {
     const HEARTBEAT_INV: u128 = 5000; // ms
 
     pub fn new() -> Self {
@@ -159,7 +159,6 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
 
         if let Some(wstream) = self.w_stream.get_mut(&dst) {
             // use existing connection to dst
-
             wstream.write_all(&msg_bytes).await.unwrap_or_else(|err| {
                 warn!("BDN::send_to write error: {}", err);
             });
@@ -212,11 +211,9 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
 
 
     // flush send buffer
-    pub fn flush_send_buffer(&mut self) {
+    pub async fn flush_send_buffer(&mut self) {
         while let Some(send_task) = self.send_buffer.pop() {
-            async_std::task::block_on(
-                self.send_to(send_task.dst(), &mut send_task.msg().to_owned())
-            );
+            self.send_to(send_task.dst(), &mut send_task.msg().to_owned()).await;
         }
     }
 
@@ -244,11 +241,13 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
             msg.set_from(self.local_identity.peer());
             msg.set_dst(&Peer::BROADCAST_ID);
 
+            // todo: short path for src is self
             self.send_to(&src, msg).await;
         } else {
             warn!("BDN::broadcast failed because it cannot find a feasible root");
         }
     }
+
 
     pub async fn send_to_indirect(&mut self, dst: &Peer, msg: &mut message::OverlayMessage) {
         let next = self.route.get_next_hop(&dst);
@@ -315,7 +314,7 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
 ///
 /// BDN will not actually process incoming messages but only store it until
 /// you poll it.
-impl<T: Transport, R: RelayCtl + Send + Sync> Iterator for BDN<T, R> {
+impl<T: Transport, R: RelayCtl> Iterator for BDN<T, R> {
     type Item = OverlayMessage;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -370,7 +369,7 @@ impl<T: Transport, R: RelayCtl + Send + Sync> Iterator for BDN<T, R> {
 }
 
 // inner method for main event loop
-impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
+impl<T: Transport, R: RelayCtl> BDN<T, R> {
     fn from_id_handler(&mut self, msg: (SocketAddrBi, OverlayMessage)) -> Option<OverlayMessage> {
         // clone for modification
         let (from_addr, mut incoming_msg) = msg.to_owned();
@@ -460,7 +459,7 @@ impl<T: Transport, R: RelayCtl + Send + Sync> BDN<T, R> {
 
 // can we just define a deref to route, or in other word is AppLayerRouteUser
 // the only trait we want to delegate?
-impl<T: Transport, R: RelayCtl + Send + Sync> AppLayerRouteUser for BDN<T, R> {
+impl<T: Transport, R: RelayCtl> AppLayerRouteUser for BDN<T, R> {
     type Host = Peer;
 
     fn get_delegate(&self, src: &Self::Host) -> Option<Self::Host> {

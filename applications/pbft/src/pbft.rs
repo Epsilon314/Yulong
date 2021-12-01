@@ -20,10 +20,10 @@ use yulong::utils::CasualTimer;
 use yulong_bdn::overlay::BDN;
 use yulong_bdn::message::OverlayMessage;
 use yulong_bdn::msg_header::{MsgHeader, MsgTypeKind, RelayMethodKind};
-use yulong_bdn::route_inner::impls::mlbt::MlbtRelayCtlContext;
 use yulong_bdn::route::AppLayerRouteUser;
+use yulong_network::transport::Transport;
+use yulong_bdn::route_inner::RelayCtl;
 
-use yulong_tcp::TcpContext;
 
 
 #[derive(PartialEq, Debug, Clone, Copy)]
@@ -43,8 +43,13 @@ enum PbftStage {
 
 const PAYLOAD_MAX: usize = 500; // bytes
 
-pub struct PbftContext<S: GenericSigner> {
-    network_handle: BDN<TcpContext, MlbtRelayCtlContext>,
+pub struct PbftContext<S, T, R> 
+    where
+        S: GenericSigner,
+        T: Transport,
+        R: RelayCtl
+{
+    network_handle: BDN<T, R>,
     signer: S,
 
     local_id: Me,
@@ -78,7 +83,12 @@ pub struct PbftContext<S: GenericSigner> {
 }
 
 
-impl<S: GenericSigner> PbftContext<S> {
+impl<S, T, R> PbftContext<S, T, R> 
+    where
+        S: GenericSigner,
+        T: Transport,
+        R: RelayCtl
+{
 
     // call this every tick
     pub fn heartbeat(&mut self) {
