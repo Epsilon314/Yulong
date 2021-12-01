@@ -10,7 +10,7 @@ use crate::msg_header::RelayMethodKind;
 /// RouteTable configurations.
 /// 
 /// message is defined by concrete implementations, thus declared as bytes.
-pub trait RelayCtl: Send{
+pub trait RelayCtl: Send + Sync {
 
     fn new(route_ctl: &RouteTable) -> Self;
 
