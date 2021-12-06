@@ -26,6 +26,7 @@ use crate::{
 
 use crate::route_inner::RelayCtl;
 
+
 pub struct BDN<T: Transport, R: RelayCtl> {
     local_identity: Me,
 
@@ -47,6 +48,7 @@ pub struct BDN<T: Transport, R: RelayCtl> {
 }
 
 impl<T: Transport, R: RelayCtl> BDN<T, R> {
+
     const HEARTBEAT_INV: u128 = 5000; // ms
 
     pub fn new() -> Self {
@@ -72,6 +74,7 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
             heartbeat_timer: timer,
         }
     }
+
 
     // accept incoming connections and spawn tasks to serve them
     pub async fn listen(listen_port: u16, msg_sender: mpsc::Sender<MessageWithIp>) {
@@ -108,6 +111,7 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
             }
         } {}
     }
+
 
     pub async fn connect(&mut self) {
         for (peer, addr) in self.address_book.iter() {
@@ -226,7 +230,7 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
         }
     }
 
-    
+   
     pub async fn broadcast(&mut self, msg: &mut message::OverlayMessage) {
         // get src and broadcast
 
@@ -341,7 +345,9 @@ impl<T: Transport, R: RelayCtl> Iterator for BDN<T, R> {
         self.relay_handler(incoming_msg.clone());
 
         // todo: flush policy
-        self.flush_send_buffer();
+        async_std::task::block_on(
+            self.flush_send_buffer()
+        );
 
         // dispatch messages
         match incoming_msg.get_type() {
@@ -621,6 +627,7 @@ mod test {
         );
 
         bdn.connect().await;
+        
         bdn.send_to(&peer, &mut m1).await;
         bdn.send_to(&peer, &mut m2).await;
         bdn.send_to(&peer, &mut m3).await;

@@ -10,6 +10,8 @@ use crate::bdn_message::{
     MlbtGrant,
     MlbtGrantInfo,
     MlbtRetract,
+    MlbtRetractReply,
+    MlbtRetractInfo,
 };
 
 use yulong::utils::AsBytes;
@@ -612,17 +614,60 @@ pub struct RelayMsgRetract {
 
 
 impl AsBytes for RelayMsgRetract {
+
     fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
-        todo!()
+
+        let protobuf_msg = MlbtRetract {
+            src_id: self.src_id.get_id().to_vec(),
+            src_inv: self.src_inv
+        };
+
+        let protobuf_bytes_len = protobuf_msg.encoded_len();
+        let mut protobuf_buf: Vec<u8> = Vec::with_capacity(protobuf_bytes_len);
+        match protobuf_msg.encode(&mut protobuf_buf) {
+            Ok(_) => {
+                Ok(protobuf_buf)
+            }
+
+            Err(error) => {
+                Err(SerializeError::new(
+                    "RelayMsgRetract::into_bytes",
+                    error
+                ))
+            }
+        }
     }
 
+
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
-        todo!()
+        match MlbtRetract::decode(buf) {
+
+            Ok(msg) => {
+
+                let src = Peer::try_from_id(&msg.src_id);
+                if src.is_err() {
+                    return Err(DeserializeError::new(
+                        "RelayMsgRetract::from_bytes", 
+                        src.unwrap_err()));
+                }
+
+                Ok(Self {
+                    src_id: src.unwrap(),
+                    src_inv: msg.src_inv
+                })
+            }
+
+            Err(error) => {
+                Err(DeserializeError::new("RelayMsgRetract::from_bytes", error))
+            }
+        }
     }
+
 }
 
 
 impl RelayMsgRetract {
+
     pub fn new(src_id: Peer, relay_inv: u64) -> Self {
         Self {
             src_id,
@@ -637,10 +682,12 @@ impl RelayMsgRetract {
         &self.src_id
     }
 
+    
     /// Get a reference to the relay msg retract's relay inv.
     pub fn src_inv(&self) -> u64 {
         self.src_inv
     }
+
 }
 
 
@@ -652,17 +699,74 @@ pub struct RelayMsgRetractReply {
 }
 
 impl AsBytes for RelayMsgRetractReply {
+
     fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
-        todo!()
+        let protobuf_msg = MlbtRetractReply {
+            src_id: self.src_id.get_id().to_vec(),
+            target_id: self.target_id.get_id().to_vec(),
+            src_inv: self.src_inv
+        };
+
+        let protobuf_bytes_len = protobuf_msg.encoded_len();
+        let mut protobuf_buf: Vec<u8> = Vec::with_capacity(protobuf_bytes_len);
+        match protobuf_msg.encode(&mut protobuf_buf) {
+            Ok(_) => {
+                Ok(protobuf_buf)
+            }
+
+            Err(error) => {
+                Err(SerializeError::new(
+                    "RelayMsgRetractReply::into_bytes",
+                    error
+                ))
+            }
+        }
     }
 
+
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
-        todo!()
+        match MlbtRetractReply::decode(buf) {
+
+            Ok(msg) => {
+
+                let src = Peer::try_from_id(&msg.src_id);
+                if src.is_err() {
+                    return Err(DeserializeError::new(
+                        "RelayMsgRetractReply::from_bytes", 
+                        src.unwrap_err()));
+                }
+
+                let target = Peer::try_from_id(&msg.target_id);
+                if target.is_err() {
+                    return Err(DeserializeError::new(
+                        "RelayMsgRetractReply::from_bytes", 
+                        target.unwrap_err()));
+                }
+
+                Ok(Self {
+                    src_id: src.unwrap(),
+                    target_id: target.unwrap(),
+                    src_inv: msg.src_inv
+                })
+            }
+
+            Err(error) => {
+                Err(DeserializeError::new("RelayMsgRetractReply::from_bytes", error))
+            }
+        }
     }
+
 }
 
 impl RelayMsgRetractReply {
-    pub fn new(src_id: Peer, target_id: Peer, src_inv: u64) -> Self { Self { src_id, target_id, src_inv } }
+
+    pub fn new(src_id: Peer, target_id: Peer, src_inv: u64) -> Self {
+        Self {
+            src_id,
+            target_id,
+            src_inv
+        } 
+    }
 
 
     /// Get a reference to the relay msg retract reply's target id.
@@ -691,12 +795,52 @@ pub struct RelayMsgRetractInfo {
 
 
 impl AsBytes for RelayMsgRetractInfo {
+
     fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
-        todo!()
+        let protobuf_msg = MlbtRetractInfo {
+            src_id: self.src_id.get_id().to_vec(),
+            src_inv: self.src_inv
+        };
+
+        let protobuf_bytes_len = protobuf_msg.encoded_len();
+        let mut protobuf_buf: Vec<u8> = Vec::with_capacity(protobuf_bytes_len);
+        match protobuf_msg.encode(&mut protobuf_buf) {
+            Ok(_) => {
+                Ok(protobuf_buf)
+            }
+
+            Err(error) => {
+                Err(SerializeError::new(
+                    "RelayMsgRetractInfo::into_bytes",
+                    error
+                ))
+            }
+        }
     }
 
+
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
-        todo!()
+        match MlbtRetractInfo::decode(buf) {
+
+            Ok(msg) => {
+
+                let src = Peer::try_from_id(&msg.src_id);
+                if src.is_err() {
+                    return Err(DeserializeError::new(
+                        "RelayMsgRetractInfo::from_bytes", 
+                        src.unwrap_err()));
+                }
+
+                Ok(Self {
+                    src_id: src.unwrap(),
+                    src_inv: msg.src_inv
+                })
+            }
+
+            Err(error) => {
+                Err(DeserializeError::new("RelayMsgRetractInfo::from_bytes", error))
+            }
+        }
     }
 }
 

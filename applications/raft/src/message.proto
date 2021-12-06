@@ -6,18 +6,24 @@ package raft;
 message raft_message {
     uint32 kind = 1;
     uint32 seq = 2;
+    bytes sender = 3;
     oneof msg {
-        request_vote req = 3;
-        request_vote_reply reply = 4;
-        append_entries app = 5;
-        append_entries_reply app_reply = 6;
-        client_request client_req = 7;
+        request_vote req = 4;
+        request_vote_reply reply = 5;
+        append_entries app = 6;
+        append_entries_reply app_reply = 7;
+        client_request client_req = 8;
     }
 }
 
 
 message client_request {
     bytes request = 1;
+}
+
+
+message client_reply {
+    bytes leader_id = 1;
 }
 
 
@@ -48,8 +54,9 @@ message append_entries {
     uint64 term = 2;
     bytes leader_id = 3;
     uint64 prev_log_idx = 4;
-    repeated uint64 prev_log_term_entries = 5;
-    uint64 leader_commit = 6;
+    uint64 prev_log_term = 5;
+    repeated uint64 prev_log_term_entries = 6;
+    uint64 leader_commit = 7;
 }
 
 
