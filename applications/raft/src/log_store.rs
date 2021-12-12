@@ -4,6 +4,8 @@ pub(crate) trait LogService {
     // them across the cluster
     fn client_new_entry(&mut self, payload: LogEntry);
 
+    fn append_entry(&mut self, entries: Vec<LogEntry>);
+
     fn commit(&mut self, idx: u64);
 
     fn last(&self) -> (u64, LogEntry);
@@ -40,6 +42,10 @@ impl LogService for ReplicatedLog {
     fn commit(&mut self, _: u64) { todo!() }
 
     fn last(&self) -> (u64, LogEntry) {
+        todo!()
+    }
+
+    fn append_entry(&mut self, entries: Vec<LogEntry>) {
         todo!()
     }
 }

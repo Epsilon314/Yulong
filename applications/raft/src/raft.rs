@@ -33,6 +33,7 @@ use crate::quorum::VoteBox;
 use crate::message::{RaftMessage, RaftMessageKind};
 use crate::quorum::VoteResult;
 use crate::raft_timer::RaftTimer;
+use crate::raft_timer::WaitStateData::ApplyEntries;
 
 
 #[derive(Debug, PartialEq)]
@@ -84,7 +85,7 @@ pub struct RaftContext<T: Transport, R: RelayCtl> {
 
 impl<T: Transport, R: RelayCtl> RaftContext<T, R> {
 
-    fn raft_msg_dispatch(&self, raft_msg: RaftMessage) {
+    fn raft_msg_dispatch(&mut self, raft_msg: RaftMessage) {
 
         match raft_msg.msg() {
             
@@ -136,12 +137,17 @@ impl<T: Transport, R: RelayCtl> RaftContext<T, R> {
     fn apply_append_entry() {
         todo!()
     }
- 
+
 
     fn send_append_entry() {
         todo!()
     }
     
+
+    fn broadcast_append_entry(&mut self, entries: Vec<LogEntry>) {
+        // todo
+    }
+
 
     // empty append entry
     fn send_heartbeat(&mut self) {
@@ -235,7 +241,7 @@ impl<T: Transport, R: RelayCtl> RaftContext<T, R> {
     }
 
 
-    fn append_entry_cb(&mut self, msg: RaftAppendEntries, seq: u32) {
+    fn append_entry_cb(&mut self, sender: &Peer, msg: RaftAppendEntries, seq: u32) {
 
         if msg.term() < self.ps.term {
             // if message's term is smaller than current term, ignore it
@@ -265,38 +271,100 @@ impl<T: Transport, R: RelayCtl> RaftContext<T, R> {
             return;
         }
 
-        // todo: check log and reply
-        
-    }
+        // check log and reply
 
-
-    fn broadcast_append_entry(&mut self, entries: Vec<LogEntry>) {
+        let is_first_log = msg.prev_log_idx() == 0;
 
         let (last_idx, last_log) = self.ps.log.last();
 
-        let append_entry_msg = RaftAppendEntries::new(
-            self.ps.term,
-            self.local_id.peer().to_owned(),
-            last_idx,
-            last_log.term(),
-            entries,
-            self.vs.commit_idx
-        );
+        let log_matches = msg.prev_log_idx() == last_idx &&
+            msg.prev_log_term() == last_log.term();
 
-        let raft_msg = RaftMessage::new(
-            RaftMessageKind::AppendEntries(append_entry_msg),
+        if is_first_log || log_matches {
+            // local log exactly matches leader log
+            self.ps.log.append_entry(msg.entries().to_owned());
+            
+            let append_entry_apply = RaftMessage::new(
+                RaftMessageKind::AppendEntriesReply(RaftAppendEntriesReply::new(
+                    seq,
+                    self.ps.term,
+                    true
+                )),
+                self.seq(),
+                self.local_id.peer()
+            );
+
+            async_std::task::block_on(
+                self.send_to_direct(append_entry_apply, sender)
+            );
+            
+            return;
+        }
+
+        // previous log do not match, need to re-sync with leader
+
+        // todo: conflicting entry optimization
+
+        let append_entry_apply = RaftMessage::new(
+            RaftMessageKind::AppendEntriesReply(RaftAppendEntriesReply::new(
+                seq,
+                self.ps.term,
+                false
+            )),
             self.seq(),
             self.local_id.peer()
         );
 
         async_std::task::block_on(
-            self.broadcast(raft_msg)
+            self.send_to_direct(append_entry_apply, sender)
         );
     }
 
 
-    fn append_entry_reply_cb(&mut self, msg: RaftAppendEntriesReply) {
-        todo!()
+    fn append_entry_reply_cb(&mut self, sender: &Peer, msg: RaftAppendEntriesReply) {
+        
+        if msg.term() > self.ps.term {
+            // become follower
+            self.state = NodeState::Follower;
+            return;
+        }
+
+
+        if !msg.success() {
+            // log consistence check failed
+
+            if let Some(idx) = self.vss.next_idx.get_mut(sender) {
+                *idx -= 1;
+                // todo: send append_entry again
+            }
+            else {
+                warn!("RaftContext::append_entry_reply_cb peer not in next_idx");
+            }
+            return;
+        }
+
+        // success
+
+        
+        if let Some(timed_data) = self.timer.get_wait_data_by_id(msg.ack()) {
+            match *timed_data {
+                ApplyEntries(next_idx, entries_len) => {
+                    
+                    if let Some(idx) = self.vss.next_idx.get_mut(sender) {
+                        *idx = next_idx + entries_len;
+                    }
+
+                    if let Some(idx) = self.vss.match_idx.get_mut(sender) {
+                        *idx = next_idx + entries_len - 1;
+                    }
+
+                },
+                _ => unreachable!()
+            }
+        }
+
+        // update commit_idx
+    
     }
 
 
@@ -457,7 +525,7 @@ impl<T: Transport, R: RelayCtl> RaftContext<T, R> {
     /// If commitIndex > lastApplied: increment lastApplied, apply
     /// log[lastApplied] to state machine
     fn apply(&mut self) {
-        if self.vs.commit_idx > self.vs.last_applied {
+        while self.vs.commit_idx > self.vs.last_applied {
             self.vs.last_applied += 1;
             // todo: apply log to state machine
             debug!("Apply log {}", self.vs.last_applied);

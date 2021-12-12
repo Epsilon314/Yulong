@@ -54,6 +54,14 @@ static JOIN_PRE_TO: u128 = 2000; // ms
 static MERGE_WAIT_TO: u128 = 2000; // ms
 static MERGE_PRE_TO: u128 = 4000; // ms
 static MERGE_CHECK_TO: u128 = 2000; // ms
+static GRANT_WAIT_TO: u128 = 2000; // ms
+static GRANT_JOIN_TO: u128 = 2000; // ms
+static RETRACT_WAIT_TO: u128 = 2000; // ms
+static RETRACT_JOIN_TO: u128 = 2000; // ms
+static GRANT_RECV_TO: u128 = 2000; // ms
+static GRANT_TOTAL_TO: u128 = 2000; // ms
+static RETRACT_RECV_TO: u128 = 2000; // ms
+static RETRACT_TOTAL_TO: u128 = 2000; // ms
 
 trait TimedStatesSingle {
 
@@ -144,14 +152,62 @@ impl WaitState {
                     inner: WaitStateData::MergeCheck(data),
                 };
             },
-            WaitStateData::GrantWait(_) => todo!(),
-            WaitStateData::GrantJoin(_) => todo!(),
-            WaitStateData::RetractWait(_) => todo!(),
-            WaitStateData::RetractJoin(_) => todo!(),
-            WaitStateData::GrantRecv(_) => todo!(),
-            WaitStateData::GrantTotal(_) => todo!(),
-            WaitStateData::RetractRecv(_) => todo!(),
-            WaitStateData::RetractTotal(_) => todo!(),
+
+            WaitStateData::GrantWait(data) => {
+                ret = Self {
+                    wait_timer: CasualTimer::new(GRANT_WAIT_TO),
+                    inner: WaitStateData::GrantWait(data),
+                };
+            },
+
+            WaitStateData::GrantJoin(data) => {
+                ret = Self {
+                    wait_timer: CasualTimer::new(GRANT_JOIN_TO),
+                    inner: WaitStateData::GrantJoin(data),
+                };
+            },
+
+            WaitStateData::RetractWait(data) => {
+                ret = Self {
+                    wait_timer: CasualTimer::new(RETRACT_WAIT_TO),
+                    inner: WaitStateData::RetractWait(data),
+                };
+            },
+            
+            WaitStateData::RetractJoin(data) => {
+                ret = Self {
+                    wait_timer: CasualTimer::new(RETRACT_JOIN_TO),
+                    inner: WaitStateData::RetractJoin(data),
+                };
+            },
+            
+            WaitStateData::GrantRecv(data) => {
+                ret = Self {
+                    wait_timer: CasualTimer::new(GRANT_RECV_TO),
+                    inner: WaitStateData::GrantRecv(data),
+                };
+            },
+            
+            WaitStateData::GrantTotal(data) => {
+                ret = Self {
+                    wait_timer: CasualTimer::new(GRANT_TOTAL_TO),
+                    inner: WaitStateData::GrantTotal(data),
+                };
+            },
+            
+            WaitStateData::RetractRecv(data) => {
+                ret = Self {
+                    wait_timer: CasualTimer::new(RETRACT_RECV_TO),
+                    inner: WaitStateData::RetractRecv(data),
+                };
+            },
+            
+            WaitStateData::RetractTotal(data) => {
+                ret = Self {
+                    wait_timer: CasualTimer::new(RETRACT_TOTAL_TO),
+                    inner: WaitStateData::RetractTotal(data),
+                };
+            },
             
         }
 
@@ -171,8 +227,13 @@ struct WaitStats {
 
     grant_wait: Option<WaitState>,
     grant_join: Option<WaitState>,
+    grant_recv: Option<WaitState>,
+    grant_total: Option<WaitState>,
+
     retract_wait: Option<WaitState>,
     retract_join: Option<WaitState>,
+    retract_recv: Option<WaitState>,
+    retract_total: Option<WaitState>,
 
 }
 
@@ -186,10 +247,17 @@ impl WaitStats {
             merge_wait: None,
             merge_pre: None,
             merge_check: None,
+
             grant_wait: None,
             grant_join: None,
+            grant_recv: None,
+            grant_total: None,
+            
             retract_wait: None,
             retract_join: None,
+            retract_recv: None,
+            retract_total: None,
+
         }
     }
 }
@@ -233,14 +301,63 @@ impl TimedStatesSingle for WaitStats {
                     None => None
                 }
             }
-            WaitStateType::GrantWait => todo!(),
-            WaitStateType::GrantJoin => todo!(),
-            WaitStateType::RetractWait => todo!(),
-            WaitStateType::RetractJoin => todo!(),
-            WaitStateType::GrantRecv => todo!(),
-            WaitStateType::GrantTotal => todo!(),
-            WaitStateType::RetractRecv => todo!(),
-            WaitStateType::RetractTotal => todo!(),
+
+            WaitStateType::GrantWait =>  {
+                match self.grant_wait.clone() {
+                    Some(stat) => Some(stat.inner),
+                    None => None
+                }
+            }
+
+            WaitStateType::GrantJoin => {
+                match self.grant_join.clone() {
+                    Some(stat) => Some(stat.inner),
+                    None => None
+                }
+            }
+            
+            WaitStateType::RetractWait => {
+                match self.retract_wait.clone() {
+                    Some(stat) => Some(stat.inner),
+                    None => None
+                }
+            }
+            
+            WaitStateType::RetractJoin => {
+                match self.retract_join.clone() {
+                    Some(stat) => Some(stat.inner),
+                    None => None
+                }
+            }
+            
+            WaitStateType::GrantRecv => {
+                match self.grant_recv.clone() {
+                    Some(stat) => Some(stat.inner),
+                    None => None
+                }
+            }
+            
+            WaitStateType::GrantTotal => {
+                match self.grant_total.clone() {
+                    Some(stat) => Some(stat.inner),
+                    None => None
+                }
+            }
+            
+            WaitStateType::RetractRecv => {
+                match self.retract_recv.clone() {
+                    Some(stat) => Some(stat.inner),
+                    None => None
+                }
+            }
+            
+            WaitStateType::RetractTotal => {
+                match self.retract_total.clone() {
+                    Some(stat) => Some(stat.inner),
+                    None => None
+                }
+            }
+            
         }
     }
 
@@ -316,14 +433,119 @@ impl TimedStatesSingle for WaitStats {
                     None => None
                 }
             }
-            WaitStateType::GrantWait => todo!(),
-            WaitStateType::GrantJoin => todo!(),
-            WaitStateType::RetractWait => todo!(),
-            WaitStateType::RetractJoin => todo!(),
-            WaitStateType::GrantRecv => todo!(),
-            WaitStateType::GrantTotal => todo!(),
-            WaitStateType::RetractRecv => todo!(),
-            WaitStateType::RetractTotal => todo!(),
+
+            WaitStateType::GrantWait => {
+                match self.grant_wait.clone() {
+                    Some(stat) => {
+                        if stat.wait_timer.is_timeout() {
+                            Some(stat.inner)
+                        }
+                        else {
+                            None
+                        }
+                    }
+                    None => None
+                }
+            }
+
+            WaitStateType::GrantJoin => {
+                match self.grant_join.clone() {
+                    Some(stat) => {
+                        if stat.wait_timer.is_timeout() {
+                            Some(stat.inner)
+                        }
+                        else {
+                            None
+                        }
+                    }
+                    None => None
+                }
+            }
+            
+            WaitStateType::RetractWait => {
+                match self.retract_wait.clone() {
+                    Some(stat) => {
+                        if stat.wait_timer.is_timeout() {
+                            Some(stat.inner)
+                        }
+                        else {
+                            None
+                        }
+                    }
+                    None => None
+                }
+            }
+            
+            WaitStateType::RetractJoin => {
+                match self.retract_join.clone() {
+                    Some(stat) => {
+                        if stat.wait_timer.is_timeout() {
+                            Some(stat.inner)
+                        }
+                        else {
+                            None
+                        }
+                    }
+                    None => None
+                }
+            }
+            
+            WaitStateType::GrantRecv => {
+                match self.grant_recv.clone() {
+                    Some(stat) => {
+                        if stat.wait_timer.is_timeout() {
+                            Some(stat.inner)
+                        }
+                        else {
+                            None
+                        }
+                    }
+                    None => None
+                }
+            }
+            
+            WaitStateType::GrantTotal => {
+                match self.grant_total.clone() {
+                    Some(stat) => {
+                        if stat.wait_timer.is_timeout() {
+                            Some(stat.inner)
+                        }
+                        else {
+                            None
+                        }
+                    }
+                    None => None
+                }
+            }
+            
+            WaitStateType::RetractRecv => {
+                match self.retract_recv.clone() {
+                    Some(stat) => {
+                        if stat.wait_timer.is_timeout() {
+                            Some(stat.inner)
+                        }
+                        else {
+                            None
+                        }
+                    }
+                    None => None
+                }
+            }
+            
+            WaitStateType::RetractTotal => {
+                match self.retract_total.clone() {
+                    Some(stat) => {
+                        if stat.wait_timer.is_timeout() {
+                            Some(stat.inner)
+                        }
+                        else {
+                            None
+                        }
+                    }
+                    None => None
+                }
+            }
+        
         }
     }
 
@@ -349,14 +571,39 @@ impl TimedStatesSingle for WaitStats {
             WaitStateData::MergeCheck(_) => {
                 self.merge_check = Some(WaitState::new(state))
             }
-            WaitStateData::GrantWait(_) => todo!(),
-            WaitStateData::GrantJoin(_) => todo!(),
-            WaitStateData::RetractWait(_) => todo!(),
-            WaitStateData::RetractJoin(_) => todo!(),
-            WaitStateData::GrantRecv(_) => todo!(),
-            WaitStateData::GrantTotal(_) => todo!(),
-            WaitStateData::RetractRecv(_) => todo!(),
-            WaitStateData::RetractTotal(_) => todo!(),
+
+            WaitStateData::GrantWait(_) => {
+                self.grant_wait = Some(WaitState::new(state))
+            }
+
+            WaitStateData::GrantJoin(_) => {
+                self.grant_join = Some(WaitState::new(state))
+            }
+            
+            WaitStateData::RetractWait(_) => {
+                self.retract_wait = Some(WaitState::new(state))
+            }
+            
+            WaitStateData::RetractJoin(_) => {
+                self.retract_join = Some(WaitState::new(state))
+            }
+            
+            WaitStateData::GrantRecv(_) => {
+                self.grant_recv = Some(WaitState::new(state))
+            }
+            
+            WaitStateData::GrantTotal(_) => {
+                self.grant_total = Some(WaitState::new(state))
+            }
+            
+            WaitStateData::RetractRecv(_) => {
+                self.retract_recv = Some(WaitState::new(state))
+            }
+            
+            WaitStateData::RetractTotal(_) => {
+                self.retract_total = Some(WaitState::new(state))
+            }
+            
             
         }
     }
@@ -383,14 +630,39 @@ impl TimedStatesSingle for WaitStats {
             WaitStateType::MergeCheck => {
                 self.merge_check = None
             }
-            WaitStateType::GrantWait => todo!(),
-            WaitStateType::GrantJoin => todo!(),
-            WaitStateType::RetractWait => todo!(),
-            WaitStateType::RetractJoin => todo!(),
-            WaitStateType::GrantRecv => todo!(),
-            WaitStateType::GrantTotal => todo!(),
-            WaitStateType::RetractRecv => todo!(),
-            WaitStateType::RetractTotal => todo!(),
+
+            WaitStateType::GrantWait => {
+                self.grant_wait = None
+            }
+
+            WaitStateType::GrantJoin => {
+                self.grant_join = None
+            }
+            
+            WaitStateType::RetractWait => {
+                self.retract_wait = None
+            }
+            
+            WaitStateType::RetractJoin => {
+                self.retract_join = None
+            }
+            
+            WaitStateType::GrantRecv => {
+                self.grant_recv = None
+            }
+            
+            WaitStateType::GrantTotal => {
+                self.grant_total = None
+            }
+            
+            WaitStateType::RetractRecv => {
+                self.retract_recv = None
+            }
+            
+            WaitStateType::RetractTotal => {
+                self.retract_total = None
+            }
+            
         }
     }
 
@@ -476,7 +748,16 @@ impl WaitList {
         self.get(root, WaitStateType::JoinPre).is_some() ||
         self.get(root, WaitStateType::MergeWait).is_some() ||
         self.get(root, WaitStateType::MergeWait).is_some() ||
-        self.get(root, WaitStateType::MergeCheck).is_some()
+        self.get(root, WaitStateType::MergeCheck).is_some() ||
+        self.get(root, WaitStateType::GrantJoin).is_some() ||
+        self.get(root, WaitStateType::GrantRecv).is_some() ||
+        self.get(root, WaitStateType::GrantRecv).is_some() ||
+        self.get(root, WaitStateType::GrantTotal).is_some() ||
+        self.get(root, WaitStateType::RetractJoin).is_some() ||
+        self.get(root, WaitStateType::RetractWait).is_some() ||
+        self.get(root, WaitStateType::RetractRecv).is_some() ||
+        self.get(root, WaitStateType::RetractTotal).is_some() 
+
     }
 
 }

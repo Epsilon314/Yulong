@@ -63,15 +63,21 @@ struct MlbtStat {
 
 struct NeighbourStat {
     delay_ts: u64,
+    stat_per_tree: HashMap<Peer, PeerStat>,
+}
+
+struct PeerStat {
+    src_inv: u64,
+    relay_inv: u64,
 }
 
 
 pub struct MlbtStatList {
 
     // self stat in each tree
-    inner_list: HashMap<Peer, MlbtStat>,
+    inner_list: HashMap<Peer, MlbtStat>,    // src -> state
 
-    neighbour_list: HashMap<Peer, NeighbourStat>,
+    neighbour_list: HashMap<Peer, NeighbourStat>,   // peer -> state
 
 }
 
@@ -80,7 +86,6 @@ impl MlbtStat {
 
     pub fn new() -> Self {
         Self {
-            // todo
             src_inv: 0,
             relay_inv: 0,
             merge_thrd: 500,    // never set to zero
@@ -117,12 +122,22 @@ impl MlbtStatMaintainer for MlbtStatList {
     }
 
     fn src_inv_desc(&self, tr: &Peer, query: &Peer) -> Option<u64> {
-        todo!()
+        match self.neighbour_list.get(query) {
+            Some(peer_stat) => {
+                peer_stat.stat_per_tree.get(tr).map(|s| s.src_inv)
+            }
+            None => None,
+        }
     }
 
     
     fn relay_inv_desc(&self, tr: &Peer, query: &Peer) -> Option<u64> {
-        todo!()
+        match self.neighbour_list.get(query) {
+            Some(peer_stat) => {
+                peer_stat.stat_per_tree.get(tr).map(|s| s.relay_inv)
+            }
+            None => None,
+        }
     }
 
 
@@ -184,15 +199,55 @@ impl MlbtStatDebug for MlbtStatList {
         }
     }
 
-    fn set_src_inv_desc(&mut self, tr: &Peer, query: &Peer, _: u64) -> Option<()> {
-        todo!()
+    fn set_src_inv_desc(&mut self, tr: &Peer, query: &Peer, new_value: u64) -> Option<()> {
+        match self.neighbour_list.get_mut(query) {
+            Some(stat) => {
+                match stat.stat_per_tree.get_mut(tr) {
+                    Some(peer_stat) => {
+                        peer_stat.src_inv = new_value;
+                        Some(())
+                    }
+                    None => {
+                        None
+                    }
+                }
+                
+            }
+            None => {
+                None
+            }
+        }
     }
 
-    fn set_relay_inv_desc(&mut self, tr: &Peer, query: &Peer, _: u64) -> Option<()> {
-        todo!()
+    fn set_relay_inv_desc(&mut self, tr: &Peer, query: &Peer, new_value: u64) -> Option<()> {
+        match self.neighbour_list.get_mut(query) {
+            Some(stat) => {
+                match stat.stat_per_tree.get_mut(tr) {
+                    Some(peer_stat) => {
+                        peer_stat.relay_inv = new_value;
+                        Some(())
+                    }
+                    None => {
+                        None
+                    }
+                }
+                
+            }
+            None => {
+                None
+            }
+        }
     }
 
-    fn set_delay_ts(&mut self, query: &Peer, _: u64) -> Option<()> {
-        todo!()
+    fn set_delay_ts(&mut self, query: &Peer, new_value: u64) -> Option<()> {
+        match self.neighbour_list.get_mut(query) {
+            Some(stat) => {
+                stat.delay_ts = new_value;
+                Some(())                
+            }
+            None => {
+                None
+            }
+        }
     }
 }

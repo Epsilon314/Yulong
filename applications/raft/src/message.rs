@@ -112,7 +112,7 @@ pub struct RaftAppendEntries {
     prev_log_idx: u64,
     prev_log_term: u64,
 
-    prev_log_term_entries: Vec<LogEntry>,
+    entries: Vec<LogEntry>,
 
     leader_commit: u64
 }
@@ -120,12 +120,12 @@ pub struct RaftAppendEntries {
 impl RaftAppendEntries {
     
     pub fn new(term: u64, leader_id: Peer, prev_log_idx: u64,
-        prev_log_term: u64, prev_log_term_entries: Vec<LogEntry>,
+        prev_log_term: u64, entries: Vec<LogEntry>,
         leader_commit: u64) -> Self 
     { 
         Self {
             term, leader_id, prev_log_idx, prev_log_term,
-            prev_log_term_entries, leader_commit
+            entries, leader_commit
         } 
     }
 
@@ -154,7 +154,7 @@ impl RaftAppendEntries {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.prev_log_term_entries.is_empty()
+        self.entries.is_empty()
     }
 
 
@@ -163,9 +163,9 @@ impl RaftAppendEntries {
         self.prev_log_term
     }
 
-    /// Get a reference to the raft append entries's prev log term entries.
-    pub fn prev_log_term_entries(&self) -> &[LogEntry] {
-        self.prev_log_term_entries.as_ref()
+    /// Get a reference to the raft append entries's entries.
+    pub fn entries(&self) -> &[LogEntry] {
+        self.entries.as_ref()
     }
 }
 

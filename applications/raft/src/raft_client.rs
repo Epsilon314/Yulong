@@ -39,7 +39,8 @@ impl<T: Transport, R: RelayCtl> RaftClientContext<T, R> {
 
         let raft_message = RaftMessage::new(
             RaftMessageKind::ClientRequest(req),
-            self.seq()
+            self.seq(),
+            self.local_id.peer()
         );
 
         if let Ok(msg_buf) = raft_message.into_bytes() {
