@@ -248,7 +248,7 @@ impl AsBytes for OverlayMessage {
     fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
 
         // Layout of OverlayMessage is:
-        // 2 bytes length (Big Endian) + payload, no more than MSG_MAXLEN in total.
+        // 4 bytes length (Big Endian) + payload, no more than MSG_MAXLEN in total.
         // payload is de/serialized using protocol-buf functionality
 
         // If the payload is too long, a SerializeError is thrown.
@@ -271,7 +271,7 @@ impl AsBytes for OverlayMessage {
         // length in bytes
         let len_bytes = protobuf_bytes_len.to_be_bytes();
 
-        if protobuf_bytes_len > MSG_MAXLEN - 2 {
+        if protobuf_bytes_len > MSG_MAXLEN - 4 {
             Err(SerializeError::new(
                 "Length is larger than MSG_MAXLEN", 
                 DumbError))
@@ -282,9 +282,9 @@ impl AsBytes for OverlayMessage {
             let mut protobuf_bytes = Vec::with_capacity(protobuf_bytes_len);
             protobuf_msg.encode(&mut protobuf_bytes).unwrap();
 
-            // set first 2 bytes to the lowest two bytes of length bytes
-            // therefore MSG_MAXLEN is at most 65536 bytes
-            ret.extend(len_bytes[size_of::<usize>()-2..size_of::<usize>()].iter());
+            // set first 4 bytes to the lowest two bytes of length bytes
+            // therefore MSG_MAXLEN is at most 16777216 bytes
+            ret.extend(len_bytes[size_of::<usize>()-4..size_of::<usize>()].iter());
             ret.extend(protobuf_bytes.iter());
             Ok(ret)
         }
@@ -293,16 +293,16 @@ impl AsBytes for OverlayMessage {
     // Do not use this, only for test & fulfil trait bound, use MessageReader instead
     fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
 
-        // first 2 bytes is payload length
-        let len = u16::from_be_bytes(buf[0..2].try_into().unwrap()) as usize;
+        // first 4 bytes is payload length
+        let len = u32::from_be_bytes(buf[0..4].try_into().unwrap()) as usize;
         
-        if len > MSG_MAXLEN - 2 {
+        if len > MSG_MAXLEN - 4 {
             Err(DeserializeError::new(
                 "Length is larger than MSG_MAXLEN",
                 DumbError))
         }
         else {
-            OverlayMessage::der_protobf_payload(&buf[2..len + 2])
+            OverlayMessage::der_protobf_payload(&buf[4..len + 4])
         }
     }
 }
@@ -321,7 +321,7 @@ impl<T: Transport> MessageReader<T> {
     pub async fn read_message(&mut self) -> Result<Option<OverlayMessage>, DeserializeError> {
 
         // first read the length 
-        let mut len_buf = [0_u8; 2];
+        let mut len_buf = [0_u8; 4];
         let read_result = self.inner.read_exact(&mut len_buf).await;
 
         if read_result.is_err() {
@@ -329,7 +329,7 @@ impl<T: Transport> MessageReader<T> {
             return Ok(None);
         }
 
-        let len = u16::from_be_bytes(len_buf) as usize;
+        let len = u32::from_be_bytes(len_buf) as usize;
         let mut payload_buf = vec![0_u8; len];
         let read_result = self.inner.read_exact(&mut payload_buf).await;
 

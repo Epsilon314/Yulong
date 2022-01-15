@@ -22,9 +22,7 @@ use crate::route_inner::{
     }
 };
 
-use log::debug;
-use log::warn;
-use log::info;
+use log::{debug, warn, info};
 use yulong_network::identity::Peer;
 
 use super::mlbt_message::{RelayMsgMerge, RelayMsgGrant, RelayMsgRetract, RelayMsgRetractReply, RelayMsgRetractInfo};
@@ -248,13 +246,34 @@ impl RelayCtl for MlbtRelayCtlContext {
             }
 
 
-            RelayMsgKind::GRANT_INFO => todo!(),
-
+            RelayMsgKind::GRANT_INFO => {
+                let reply = self.grant_info_cb(sender, &parse_ctl_message);
+                if let Some((peer, ctl_msg_payload)) = reply {
+                    ret.push((peer, ctl_msg_payload.into_bytes().unwrap()));
+                }
+            }
             
-            RelayMsgKind::RETRACT => todo!(),
-            RelayMsgKind::RETRACT_INFO => todo!(),
-            RelayMsgKind::RETRACT_REPLY => todo!(),
-        
+            RelayMsgKind::RETRACT => {
+                let reply = self.retract_cb(route_ctl, sender, &parse_ctl_message);
+                if let Some((peer, ctl_msg_payload)) = reply {
+                    ret.push((peer, ctl_msg_payload.into_bytes().unwrap()));
+                }
+            }
+            
+            RelayMsgKind::RETRACT_INFO => {
+                let reply = self.retract_info_cb(route_ctl, sender, &parse_ctl_message);
+                if let Some((peer, ctl_msg_payload)) = reply {
+                    ret.push((peer, ctl_msg_payload.into_bytes().unwrap()));
+                }
+            }
+            
+            RelayMsgKind::RETRACT_REPLY => {
+                let reply = self.retract_wait_cb(route_ctl, sender, &parse_ctl_message);
+                if let Some((peer, ctl_msg_payload)) = reply {
+                    ret.push((peer, ctl_msg_payload.into_bytes().unwrap()));
+                }
+            }
+            
         }
 
         ret
@@ -619,7 +638,7 @@ impl MlbtRelayCtlContext {
 
             match timed_data {
                 
-                WaitStateData::JoinWait((src, waitfor, id)) => {
+                WaitStateData::JoinWait((src, waitfor, _)) => {
                     let reply = self.join_wait_cb(
                         route_ctl, &src, &waitfor, incoming_msg_id, pos);
                     
@@ -630,13 +649,13 @@ impl MlbtRelayCtlContext {
                     return ret;
                 }
 
-                WaitStateData::JoinPre((src, waitfor, id)) => {
+                WaitStateData::JoinPre((src, waitfor, _)) => {
                     self.join_pre_cb(route_ctl, &src, &waitfor, 
-                        incoming_msg_id, pos);
+                        incoming_msg_id, pos);  // no return value
                     return ret;
                 }
 
-                WaitStateData::MergeWait((src, waitfor, id)) => {
+                WaitStateData::MergeWait((src, waitfor, _)) => {
                     let reply = self.merge_wait_cb(
                         route_ctl, &src, &waitfor, incoming_msg_id, pos);
                     
@@ -646,25 +665,81 @@ impl MlbtRelayCtlContext {
                     return ret;
                 }
 
-                WaitStateData::MergePre((src, waitfor, id)) => {
+                WaitStateData::MergePre((src, waitfor, _)) => {
                     self.merge_pre_cb(route_ctl, &src, &waitfor, 
-                        incoming_msg_id, pos);
+                        incoming_msg_id, pos);  // no return value
                     return ret;
                 }
 
                 WaitStateData::MergeCheck((src, merge_target, id)) => {
-                    self.merge_ck_res_cb(route_ctl, &src, &merge_target, id, pos);
+                    let reply = self.merge_ck_res_cb(route_ctl, &src, &merge_target, id, pos);
+                    
+                    if reply.is_some() {
+                        ret.push(reply.unwrap());
+                    }
                     return ret;
                 }
                 
-                WaitStateData::GrantWait(_) => todo!(),
-                WaitStateData::GrantJoin(_) => todo!(),
-                WaitStateData::RetractWait(_) => todo!(),
-                WaitStateData::RetractJoin(_) => todo!(),
-                WaitStateData::GrantRecv(_) => todo!(),
-                WaitStateData::GrantTotal(_) => todo!(),
-                WaitStateData::RetractRecv(_) => todo!(),
-                WaitStateData::RetractTotal(_) => todo!(),
+                WaitStateData::GrantWait((src, recv, _)) => {
+                    self.grant_wait_cb(route_ctl, &recv, &src, pos);
+                    return ret;
+                }
+
+                WaitStateData::GrantJoin((src, recv, _)) => {
+                    let reply = self.grant_info_wait_cb(
+                        route_ctl, &recv, &src, incoming_msg_id, pos);
+
+                    if reply.is_some() {
+                        ret.push(reply.unwrap());
+                    }
+                    return ret;
+                }
+                
+                WaitStateData::RetractWait(_) => {
+                    // retract wait is not Accept/Reject message
+                    unreachable!();
+                }
+                
+                WaitStateData::RetractJoin((src, recv, _)) => {
+                    let reply = self.retract_info_ack_cb(route_ctl,
+                        &recv, &src, incoming_msg_id, pos);
+
+                    if reply.is_some() {
+                        ret.push(reply.unwrap());
+                    }
+                    return ret;
+                }
+                
+                WaitStateData::GrantRecv((src, recv)) => {
+                    let reply = self.grant_info_ack_cb(route_ctl, 
+                        &recv, &src, incoming_msg_id, pos);
+
+                    if reply.is_some() {
+                        ret.push(reply.unwrap());
+                    }
+                    return ret;
+                }
+                
+                WaitStateData::GrantTotal(_) => {
+                    // leave message
+                    unreachable!();
+                }
+                
+                WaitStateData::RetractRecv((src, sender, _)) => {
+                    let reply = self.retract_info_wait_cb(route_ctl,
+                        &sender, &src, incoming_msg_id, pos);
+
+                    if reply.is_some() {
+                        ret.push(reply.unwrap());
+                    }
+                    return ret;
+                }
+                
+                WaitStateData::RetractTotal(_) => {
+                    // leave
+                    unreachable!()
+                }
+                
             }
         }
         
@@ -1704,7 +1779,7 @@ impl MlbtRelayCtlContext {
     }
 
 
-    fn retact_leave_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
+    fn retract_leave_cb(&mut self, route_ctl: &mut RouteTable, sender: &Peer,
         msg: &RelayCtlMessage) 
     {
         
@@ -1713,7 +1788,7 @@ impl MlbtRelayCtlContext {
                 self.state.set(leave_msg.src(),&MlbtTerm::Estb((
                     JoinSubTerm::Idle, BalanceSubTerm::Idle)));
                 
-                self.wait_list.clear(leave_msg.src(), WaitStateType::GrantTotal);
+                self.wait_list.clear(leave_msg.src(), WaitStateType::RetractTotal);
 
                 route_ctl.remove_relay(leave_msg.src(), sender);
             }

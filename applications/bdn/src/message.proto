@@ -42,11 +42,18 @@ message mlbt_grant_info {
 
 message mlbt_retract {
     bytes src_id = 1;
-    uint64 relay_inv = 2;
+    uint64 src_inv = 2;
 }
 
 
 message mlbt_retract_reply {
     bytes src_id = 1;
     bytes target_id = 2;
+    uint64 src_inv = 3;
+}
+
+
+message mlbt_retract_info {
+    bytes src_id = 1;
+    uint64 src_inv = 2;
 }

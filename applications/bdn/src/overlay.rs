@@ -9,7 +9,7 @@ use std::{
     collections::BinaryHeap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::mpsc,
-    time::Duration,
+    time::{Duration, SystemTime, Instant},
 };
 
 use async_std::io::BufReader;
@@ -24,29 +24,34 @@ use crate::{
     route::Route,
 };
 
+use bytes::{Bytes};
+
 use crate::route_inner::RelayCtl;
 
+// todo: interface is not done, so make pub for now, change it back later
 pub struct BDN<T: Transport, R: RelayCtl> {
-    local_identity: Me,
+    pub local_identity: Me,
 
     // peer's listening socket
-    address_book: BidirctHashmap<Peer, SocketAddrBi>,
+    pub address_book: BidirctHashmap<Peer, SocketAddrBi>,
 
     w_stream: HashMap<Peer, <T as Transport>::Stream>,
 
-    #[allow(dead_code)]
-    msg_sender: mpsc::Sender<MessageWithIp>,
+    pub msg_sender: mpsc::Sender<MessageWithIp>,
     msg_receiver: mpsc::Receiver<MessageWithIp>,
 
     use_send_buffer: bool,
+    use_zero_copy: bool,
+
     send_buffer: BinaryHeap::<MsgWithPriority>,
 
-    route: Route<R>,
+    pub route: Route<R>,
 
     heartbeat_timer: CasualTimer,
 }
 
 impl<T: Transport, R: RelayCtl> BDN<T, R> {
+
     const HEARTBEAT_INV: u128 = 5000; // ms
 
     pub fn new() -> Self {
@@ -67,11 +72,13 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
             msg_sender: sender,
             msg_receiver: receiver,
             use_send_buffer: true,
+            use_zero_copy: false,
             send_buffer: BinaryHeap::new(),
             route: Route::new(&id.peer()),
             heartbeat_timer: timer,
         }
     }
+
 
     // accept incoming connections and spawn tasks to serve them
     pub async fn listen(listen_port: u16, msg_sender: mpsc::Sender<MessageWithIp>) {
@@ -109,6 +116,7 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
         } {}
     }
 
+
     pub async fn connect(&mut self) {
         for (peer, addr) in self.address_book.iter() {
             if self.w_stream.contains_key(peer) {
@@ -142,11 +150,56 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
     }
 
 
+    pub fn prepare_msg_bytes(msg: &mut message::OverlayMessage) -> Vec<u8> {
+        msg.set_timestamp_now();
+        msg.into_bytes().unwrap()
+    }
+
+
+    pub async fn send_to_raw_message(&mut self, dst: &Peer, msg_bytes: &[u8]) {
+        if let Some(wstream) = self.w_stream.get_mut(&dst) {
+            // use existing connection to dst
+            wstream.write_all(msg_bytes).await.unwrap_or_else(|err| {
+                warn!("BDN::send_to write error: {}", err);
+            });
+            return;
+        }
+
+        // no established stream, connect and send
+        let addr = self.address_book.get_by_key(&dst);
+
+        if addr.is_none() {
+            warn!("BDN::send_to unknown dst: {:?}", &dst.get_id());
+            return;
+        }
+
+        let addr = addr.unwrap();
+        let con_socket = SocketAddr::new(addr.ip(), addr.listen_port());
+
+        match T::connect(&con_socket).await {
+            Ok(mut wstream) => {
+                wstream.write_all(msg_bytes).await.unwrap_or_else(|err| {
+                    warn!("BDN::send_to write error: {}", err);
+                });
+                self.w_stream.insert(dst.clone(), wstream);
+            }
+
+            Err(error) => {
+                warn!(
+                    "BDN::send_to encounter an error when connecting {}. Error: {}",
+                    con_socket, error
+                );
+            }
+        }
+    }
+
+
     // async send
     pub async fn send_to(&mut self, dst: &Peer, msg: &mut message::OverlayMessage) {
         // allow fail
         msg.set_timestamp_now();
 
+        // todo: msg is cloned here, which may not be efficient
         let msg_bytes = msg.into_bytes();
 
         if msg_bytes.is_err() {
@@ -156,6 +209,8 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
         let msg_bytes = msg_bytes.unwrap();
 
         // send through an existing stream
+
+        debug!("BDN::send_to: {} bytes", msg_bytes.len());
 
         if let Some(wstream) = self.w_stream.get_mut(&dst) {
             // use existing connection to dst
@@ -221,12 +276,23 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
     pub async fn relay_on(&mut self, src: &Peer, msg: &mut message::OverlayMessage) {
         let relay_list = self.route.get_relay(&src);
 
-        for peer in relay_list {
-            self.send_to(&peer, msg).await
+        if self.use_zero_copy {
+
+            
+            let raw_msg = Bytes::from(Self::prepare_msg_bytes(msg));
+
+            for peer in relay_list {
+                self.send_to_raw_message(&peer, &raw_msg).await
+            }
+        }
+        else {
+            for peer in relay_list {
+                self.send_to(&peer, msg).await
+            }
         }
     }
 
-    
+   
     pub async fn broadcast(&mut self, msg: &mut message::OverlayMessage) {
         // get src and broadcast
 
@@ -337,11 +403,15 @@ impl<T: Transport, R: RelayCtl> Iterator for BDN<T, R> {
         }
         let incoming_msg = incoming_msg.unwrap();
 
+
+        
         // relay module will take a clone in case it changes the message before relaying it
         self.relay_handler(incoming_msg.clone());
 
         // todo: flush policy
-        self.flush_send_buffer();
+        async_std::task::block_on(
+            self.flush_send_buffer()
+        );
 
         // dispatch messages
         match incoming_msg.get_type() {
@@ -416,6 +486,9 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
         // relay messages
         // handle relay messages in sequence
         if incoming_msg.is_relay() {
+
+            let relay_start = Instant::now();
+
             let src = &incoming_msg.src();
             incoming_msg.set_from(&self.local_identity.peer());
 
@@ -428,6 +501,8 @@ impl<T: Transport, R: RelayCtl> BDN<T, R> {
             // todo: now send_to intercept all errors so we cannot pass on send failures
             // to route module
             self.route.relay_receipt(true);
+
+            debug!("Relay time consumption: {}", relay_start.elapsed().as_millis());
         }
     }
 
@@ -621,6 +696,7 @@ mod test {
         );
 
         bdn.connect().await;
+        
         bdn.send_to(&peer, &mut m1).await;
         bdn.send_to(&peer, &mut m2).await;
         bdn.send_to(&peer, &mut m3).await;

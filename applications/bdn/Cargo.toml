@@ -12,7 +12,7 @@ yulong_network = {path = "../../network"}
 yulong_tcp = {path = "../../transport/tcp"}
 yulong_quic = {path = "../../transport/quic"}
 futures = "0.3.8"
-async-std = {version = "1.10.0", features = ["attributes", "tokio1"]}
+async-std = {version = "1.10.0", features = ["attributes", "tokio1", "unstable"]}
 async-trait = "0.1.51"
 prost = "0.7"
 prost-types = "0.7.0"
@@ -20,6 +20,8 @@ log = "0.4.14"
 num-traits = "0.2"
 num-derive = "0.3"
 rayon = "1.5.1"
+bytes = "1.1.0"
+
 
 [build-dependencies]
 prost-build = "0.7.0"

@@ -2,9 +2,12 @@ use yulong::utils::AsBytes;
 use yulong::error::{SerializeError, DeserializeError};
 use yulong_network::identity::Peer;
 
+use crate::log_store::LogEntry;
+
 #[derive(Debug)]
 pub struct RaftMessage {
     seq: u32,
+    sender: Peer,
     msg: RaftMessageKind,
 }
 
@@ -16,6 +19,7 @@ pub enum RaftMessageKind {
     AppendEntries(RaftAppendEntries),
     AppendEntriesReply(RaftAppendEntriesReply),
     ClientRequest(RaftClientRequest),
+    ClientReply(RaftClientReply),
 }
 
 
@@ -106,12 +110,26 @@ pub struct RaftAppendEntries {
     leader_id: Peer,
 
     prev_log_idx: u64,
-    prev_log_term_entries: Vec<u64>,
+    prev_log_term: u64,
+
+    entries: Vec<LogEntry>,
 
     leader_commit: u64
 }
 
 impl RaftAppendEntries {
+    
+    pub fn new(term: u64, leader_id: Peer, prev_log_idx: u64,
+        prev_log_term: u64, entries: Vec<LogEntry>,
+        leader_commit: u64) -> Self 
+    { 
+        Self {
+            term, leader_id, prev_log_idx, prev_log_term,
+            entries, leader_commit
+        } 
+    }
+
+
 
     /// Get a reference to the raft append entries's term.
     pub fn term(&self) -> u64 {
@@ -128,10 +146,7 @@ impl RaftAppendEntries {
         self.prev_log_idx
     }
 
-    /// Get a reference to the raft append entries's prev log term entries.
-    pub fn prev_log_term_entries(&self) -> &[u64] {
-        self.prev_log_term_entries.as_ref()
-    }
+
 
     /// Get a reference to the raft append entries's leader commit.
     pub fn leader_commit(&self) -> u64 {
@@ -139,9 +154,19 @@ impl RaftAppendEntries {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.prev_log_term_entries.is_empty()
+        self.entries.is_empty()
     }
 
+
+    /// Get a reference to the raft append entries's prev log term.
+    pub fn prev_log_term(&self) -> u64 {
+        self.prev_log_term
+    }
+
+    /// Get a reference to the raft append entries's entries.
+    pub fn entries(&self) -> &[LogEntry] {
+        self.entries.as_ref()
+    }
 }
 
 
@@ -154,6 +179,8 @@ pub struct RaftAppendEntriesReply {
 
 
 impl RaftAppendEntriesReply {
+    pub fn new(ack: u32, term: u64, success: bool) -> Self { Self { ack, term, success } }
+
 
 
     /// Get a reference to the raft append entries reply's ack.
@@ -202,6 +229,34 @@ impl RaftClientRequest {
 }
 
 
+#[derive(Debug)]
+pub struct RaftClientReply {
+    leader_id: Peer,
+}
+
+
+impl AsBytes for RaftClientReply {
+    fn into_bytes(&self) -> Result<Vec<u8>, SerializeError> {
+        todo!()
+    }
+
+    fn from_bytes(buf: &[u8]) -> Result<Self, DeserializeError> {
+        todo!()
+    }
+}
+
+
+impl RaftClientReply {
+    pub fn new(leader_id: Peer) -> Self { Self { leader_id } }
+
+
+
+    /// Get a reference to the raft client reply's leader id.
+    pub fn leader_id(&self) -> &Peer {
+        &self.leader_id
+    }
+}
+
 impl AsBytes for RaftMessage {
 
 
@@ -219,10 +274,11 @@ impl AsBytes for RaftMessage {
 
 impl RaftMessage {
 
-    pub fn new(msg: RaftMessageKind, seq: u32) -> Self {
+    pub fn new(msg: RaftMessageKind, seq: u32, sender: &Peer) -> Self {
         Self {
             seq,
             msg,
+            sender: sender.to_owned()
         }
     }
 
@@ -246,6 +302,12 @@ impl RaftMessage {
             RaftMessageKind::AppendEntries(m) => Some(m.term()),
             RaftMessageKind::AppendEntriesReply(m) => Some(m.term()),
             RaftMessageKind::ClientRequest(_) => todo!(),
+            RaftMessageKind::ClientReply(_) => todo!(),
         }
+    }
+
+    /// Get a reference to the raft message's sender.
+    pub fn sender(&self) -> &Peer {
+        &self.sender
     }
 }
