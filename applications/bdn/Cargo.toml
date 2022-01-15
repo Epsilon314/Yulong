@@ -20,6 +20,8 @@ log = "0.4.14"
 num-traits = "0.2"
 num-derive = "0.3"
 rayon = "1.5.1"
+bytes = "1.1.0"
+
 
 [build-dependencies]
 prost-build = "0.7.0"

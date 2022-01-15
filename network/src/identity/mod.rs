@@ -60,6 +60,11 @@ impl Me {
     pub fn public_key(&self) -> &PublicKey {
         &self.peer.pubkey
     }
+
+    /// Set the me's peer.
+    pub fn set_peer(&mut self, peer: Peer) {
+        self.peer = peer;
+    }
 }
 
 

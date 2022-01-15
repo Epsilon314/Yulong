@@ -76,5 +76,5 @@ mod common {
 
 mod configs {
     pub const DEFAULT_BDN_PORT: u16 = 10450;
-    pub const MSG_MAXLEN: usize = 2048; //bytes
+    pub const MSG_MAXLEN: usize = 10485760 ; //10 M bytes
 }
